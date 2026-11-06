@@ -1,0 +1,15 @@
+# 用 pnpm run configure 生成本机 cordis.yml，再填入你自己的 Key。
+- insert:
+    - id: trip-amap
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: amap
+        transport: streamable-http
+        url: 'https://mcp.amap.com/mcp?key=YOUR_AMAP_MCP_KEY'
+        failOnStartupError: false
+    - id: trip-planner
+      name: "__TRIP_HOST_ENTRY__"
+      config:
+        defaultCity: '广州'
+    - id: trip-planner-web
+      name: "__TRIP_WEB_ENTRY__"

@@ -1,0 +1,68 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@deepseek-ai/cordis':
+        specifier: link:../deepseek-harness/vendor/cordis
+        version: link:../deepseek-harness/vendor/cordis
+      '@deepseek-ai/dsh-llm':
+        specifier: link:../deepseek-harness/packages/llm/llm
+        version: link:../deepseek-harness/packages/llm/llm
+      '@deepseek-ai/dsh-storage-domain':
+        specifier: link:../deepseek-harness/packages/storage/storage-domain
+        version: link:../deepseek-harness/packages/storage/storage-domain
+      '@deepseek-ai/dsh-tools':
+        specifier: link:../deepseek-harness/packages/core/tools
+        version: link:../deepseek-harness/packages/core/tools
+      '@deepseek-ai/dsh-typert-protocol':
+        specifier: link:../deepseek-harness/packages/typert/protocol
+        version: link:../deepseek-harness/packages/typert/protocol
+      '@deepseek-ai/schemastery':
+        specifier: link:../deepseek-harness/vendor/schemastery
+        version: link:../deepseek-harness/vendor/schemastery
+      dsh-trip-planner-web:
+        specifier: link:packages/web
+        version: link:packages/web
+      zod:
+        specifier: link:../deepseek-harness/node_modules/zod
+        version: link:../deepseek-harness/node_modules/zod
+    devDependencies:
+      '@deepseek-ai/dsh-api-gateway':
+        specifier: link:../deepseek-harness/packages/api/gateway
+        version: link:../deepseek-harness/packages/api/gateway
+      '@deepseek-ai/dsh-client-store':
+        specifier: link:../deepseek-harness/packages/client/store
+        version: link:../deepseek-harness/packages/client/store
+      '@deepseek-ai/dsh-client-ui-renderer':
+        specifier: link:../deepseek-harness/packages/client/ui-renderer
+        version: link:../deepseek-harness/packages/client/ui-renderer
+      '@deepseek-ai/dsh-client-ui-sidebar-right':
+        specifier: link:../deepseek-harness/packages/client/ui-sidebar-right
+        version: link:../deepseek-harness/packages/client/ui-sidebar-right
+      '@deepseek-ai/dsh-client-ui-slots':
+        specifier: link:../deepseek-harness/packages/client/ui-slots
+        version: link:../deepseek-harness/packages/client/ui-slots
+      '@deepseek-ai/dsh-typert-generator':
+        specifier: link:../deepseek-harness/packages/typert/generator
+        version: link:../deepseek-harness/packages/typert/generator
+      '@types/node':
+        specifier: link:../deepseek-harness/node_modules/@types/node
+        version: link:../deepseek-harness/node_modules/@types/node
+      '@types/react':
+        specifier: link:../deepseek-harness/node_modules/@types/react
+        version: link:../deepseek-harness/node_modules/@types/react
+      esbuild:
+        specifier: link:../deepseek-harness/node_modules/.pnpm/esbuild@0.28.2/node_modules/esbuild
+        version: link:../deepseek-harness/node_modules/.pnpm/esbuild@0.28.2/node_modules/esbuild
+      react:
+        specifier: link:../deepseek-harness/node_modules/.pnpm/react@18.3.1/node_modules/react
+        version: link:../deepseek-harness/node_modules/.pnpm/react@18.3.1/node_modules/react
+      typescript:
+        specifier: link:../deepseek-harness/node_modules/typescript
+        version: link:../deepseek-harness/node_modules/typescript

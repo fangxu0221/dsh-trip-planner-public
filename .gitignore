@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.*
+/cordis.yml
+/cordis.local.yml
+/.dsh/
+/artifacts/
+/tests/
+/.tmp/
+/.codegraph/
+/packages/web/lib/
+/packages/.protocol-types/
+/tsconfig.web-analysis.json
+*.log

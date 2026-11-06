@@ -1,0 +1,40 @@
+{
+  "name": "dsh-trip-planner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DeepSeek Harness 出行规划插件：高德地点搜索、服务分层与结构化工具输出",
+  "engines": {
+    "node": ">=24.9.0"
+  },
+  "scripts": {
+    "configure": "node scripts/configure.mjs",
+    "build:web": "node scripts/build-web.mjs",
+    "start:web": "node scripts/start-web.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "packageManager": "pnpm@11.28.5",
+  "dependencies": {
+    "@deepseek-ai/cordis": "link:../deepseek-harness/vendor/cordis",
+    "@deepseek-ai/schemastery": "link:../deepseek-harness/vendor/schemastery",
+    "@deepseek-ai/dsh-tools": "link:../deepseek-harness/packages/core/tools",
+    "@deepseek-ai/dsh-llm": "link:../deepseek-harness/packages/llm/llm",
+    "@deepseek-ai/dsh-storage-domain": "link:../deepseek-harness/packages/storage/storage-domain",
+    "@deepseek-ai/dsh-typert-protocol": "link:../deepseek-harness/packages/typert/protocol",
+    "dsh-trip-planner-web": "link:packages/web",
+    "zod": "link:../deepseek-harness/node_modules/zod"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-api-gateway": "link:../deepseek-harness/packages/api/gateway",
+    "@deepseek-ai/dsh-client-store": "link:../deepseek-harness/packages/client/store",
+    "@deepseek-ai/dsh-client-ui-renderer": "link:../deepseek-harness/packages/client/ui-renderer",
+    "@deepseek-ai/dsh-client-ui-sidebar-right": "link:../deepseek-harness/packages/client/ui-sidebar-right",
+    "@deepseek-ai/dsh-client-ui-slots": "link:../deepseek-harness/packages/client/ui-slots",
+    "@deepseek-ai/dsh-typert-generator": "link:../deepseek-harness/packages/typert/generator",
+    "@types/react": "link:../deepseek-harness/node_modules/@types/react",
+    "esbuild": "link:../deepseek-harness/node_modules/.pnpm/esbuild@0.28.2/node_modules/esbuild",
+    "react": "link:../deepseek-harness/node_modules/.pnpm/react@18.3.1/node_modules/react",
+    "typescript": "link:../deepseek-harness/node_modules/typescript",
+    "@types/node": "link:../deepseek-harness/node_modules/@types/node"
+  }
+}
