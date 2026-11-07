@@ -5,23 +5,34 @@ import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typer
 import type {} from '../../../src/services/travel-data.ts'
 import type {} from '../../../src/services/saved-places.ts'
 import type {} from '../../../src/services/route-planner.ts'
+import type {} from '../../../src/services/saved-routes.ts'
+import { SessionRoutes } from './session-routes.ts'
 import type {
   PlacesSearchResult, PlanRouteQuery, PlanRouteResult, RenameSavedPlaceRequest, SavedPlaceOption, SavedPlacesView,
   SavedPlaceTarget, SavedPlaceWriteResult, SavePlaceRequest, SearchPlacesQuery,
+  RenameSavedRouteRequest, SavedRoutesView, SavedRouteWriteResult, SaveRouteRequest, UpdateSavedRouteEndpointsRequest,
+  ChatRouteRequest, ChatRouteView,
 } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context { tripPlannerWeb: TripPlannerController }
 }
 
+type ChangedEvent = 'trip/saved-places-changed' | 'trip/saved-routes-changed'
+
 export class TripPlannerController extends TypertRemoteService {
-  static inject = ['typert', 'travelData', 'savedPlaces', 'routePlanner']
-  private revision = 0
+  static inject = ['typert', 'travelData', 'savedPlaces', 'routePlanner', 'savedRoutes', 'sessions']
+  private readonly chatRoutes: SessionRoutes
+  private readonly revision: Record<ChangedEvent, number> = {
+    'trip/saved-places-changed': 0, 'trip/saved-routes-changed': 0,
+  }
   private readonly lifetime = new AbortController()
 
   constructor(ctx: Context) {
     super(ctx, 'tripPlannerWeb', { namespace: 'tripPlanner' })
-    ctx.on('trip/saved-places-changed', () => { this.revision++ })
+    this.chatRoutes = new SessionRoutes(ctx)
+    ctx.on('trip/saved-places-changed', () => { this.revision['trip/saved-places-changed']++ })
+    ctx.on('trip/saved-routes-changed', () => { this.revision['trip/saved-routes-changed']++ })
     ctx.effect(() => () => this.lifetime.abort())
   }
 
@@ -63,25 +74,59 @@ export class TripPlannerController extends TypertRemoteService {
     })
   }
 
-  /** 先监听再读列表。连续写入可以合并，但每帧的版本和收藏必须对应。 */
   @Remote({ mode: 'stream' })
   async *followSavedPlaces(signal: AbortSignal): AsyncIterable<SavedPlacesView> {
+    yield* this.follow('trip/saved-places-changed', signal, async (revision, active) =>
+      ({ revision, places: await this.listSavedPlaces(active) }))
+  }
+
+  @Remote({ mode: 'stream' })
+  async *followSavedRoutes(signal: AbortSignal): AsyncIterable<SavedRoutesView> {
+    yield* this.follow('trip/saved-routes-changed', signal, async (revision, active) =>
+      ({ revision, routes: await this.query(active, () => this.ctx.savedRoutes.list()) }))
+  }
+
+  @Remote('saveSavedRoute')
+  async saveSavedRoute(request: SaveRouteRequest, signal: AbortSignal): Promise<SavedRouteWriteResult> {
+    return this.query(signal, async () => ({ name: (await this.ctx.savedRoutes.save(request, signal)).name }))
+  }
+
+  @Remote('renameSavedRoute')
+  async renameSavedRoute(request: RenameSavedRouteRequest, signal: AbortSignal): Promise<SavedRouteWriteResult> {
+    return this.query(signal, async () => ({ name: (await this.ctx.savedRoutes.rename(request.id, request.name, signal)).name }))
+  }
+
+  @Remote('updateSavedRouteEndpoints')
+  async updateSavedRouteEndpoints(request: UpdateSavedRouteEndpointsRequest, signal: AbortSignal): Promise<SavedRouteWriteResult> {
+    return this.query(signal, async () => ({
+      name: (await this.ctx.savedRoutes.updateEndpoints(request.id, request.endpoints, signal)).name,
+    }))
+  }
+
+  @Remote('removeSavedRoute')
+  async removeSavedRoute(id: string, signal: AbortSignal): Promise<SavedRouteWriteResult> {
+    return this.query(signal, async () => ({ name: (await this.ctx.savedRoutes.remove(id, signal)).name }))
+  }
+
+  /** 先监听再读列表。连续写入可以合并，但每帧的版本和数据必须对应。 */
+  private async *follow<T>(event: ChangedEvent, signal: AbortSignal,
+    read: (revision: number, signal: AbortSignal) => Promise<T>): AsyncIterable<T> {
     const combined = AbortSignal.any([signal, this.lifetime.signal])
     let sentRevision = -1
     let wake: (() => void) | undefined
     const notify = () => wake?.()
-    const off = this.ctx.on('trip/saved-places-changed', notify)
+    const off = this.ctx.on(event, notify)
     combined.addEventListener('abort', notify, { once: true })
     try {
       while (!combined.aborted) {
-        if (sentRevision === this.revision) await new Promise<void>(resolve => { wake = resolve })
+        if (sentRevision === this.revision[event]) await new Promise<void>(resolve => { wake = resolve })
         wake = undefined
         if (combined.aborted) return
-        const revision = this.revision
-        const places = await this.listSavedPlaces(combined)
-        if (revision !== this.revision) continue
+        const revision = this.revision[event]
+        const view = await read(revision, combined)
+        if (revision !== this.revision[event]) continue
         sentRevision = revision
-        yield { revision, places }
+        yield view
       }
     } catch (error) {
       if (!combined.aborted) throw error
@@ -94,6 +139,12 @@ export class TripPlannerController extends TypertRemoteService {
   @Remote('planRoute')
   async planRoute(query: PlanRouteQuery, signal: AbortSignal): Promise<PlanRouteResult> {
     return this.query(signal, () => this.ctx.routePlanner.plan(query, { signal }))
+  }
+
+  // 让 Harness 网关在调用前按 sessionId 校验会话访问权限。
+  @Remote({ mode: 'stream', resources: { session: request => request.sessionId as Parameters<Context['sessions']['get']>[0] } })
+  followChatRoute(request: ChatRouteRequest, signal: AbortSignal): AsyncIterable<ChatRouteView> {
+    return this.chatRoutes.follow(request.sessionId, signal)
   }
 
   private async query<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> {

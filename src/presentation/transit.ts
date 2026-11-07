@@ -8,9 +8,12 @@ export function transitCue(segment: RouteSegment, option: TransitOption) {
     ? segment.exit : null
   return {
     boarding: option.departureStop ? '在' + option.departureStop + (entrance ? '（' + entrance + '进站）' : '') : '',
+    departure: option.departureStop,
+    entrance,
     line: option.serviceName ?? option.lineName ?? option.vehicleType ?? '线路未提供',
     direction: option.direction && option.direction + '方向',
     stops: option.stopsToArrival === undefined ? '' : '乘坐 ' + option.stopsToArrival + ' 站，',
+    stopCount: option.stopsToArrival,
     arrival: option.arrivalStop,
     exit,
   }

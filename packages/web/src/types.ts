@@ -104,3 +104,19 @@ export interface PlanRouteResult {
   routes: RouteAlternative[]
   warnings: string[]
 }
+
+export interface ChatRouteRequest { sessionId: string }
+export interface ChatRouteView {
+  revision: number
+  result: PlanRouteResult | null
+}
+
+export type SavedRouteEndpoint = { kind: 'saved'; savedPlaceId: string; label: string }
+  | { kind: 'poi'; placeId: string; label: string }
+export interface SavedRouteEndpoints { origin: SavedRouteEndpoint; destination: SavedRouteEndpoint }
+export interface SaveRouteRequest extends SavedRouteEndpoints { name: string; mode: RouteMode }
+export interface SavedRouteOption extends SaveRouteRequest { id: string; updatedAt: string }
+export interface SavedRoutesView { revision: number; routes: SavedRouteOption[] }
+export interface RenameSavedRouteRequest { id: string; name: string }
+export interface UpdateSavedRouteEndpointsRequest { id: string; endpoints: SavedRouteEndpoints }
+export interface SavedRouteWriteResult { name: string }

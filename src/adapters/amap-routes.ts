@@ -136,7 +136,7 @@ export function normalizeRoutePayload(payload: Record<string, unknown>, mode: Ro
     throw new HarnessError('高德路线查询返回业务错误，请检查服务权限或查询条件。', 'TRIP_UPSTREAM_ERROR')
   }
   const body = object(payload.route ?? payload.data ?? payload)
-  const warnings = new Set<string>(['距离和耗时为来源的规划估计，不保证实际到达时间；方案顺序沿用来源，不代表全局最优。'])
+  const warnings = new Set<string>()
   let candidates: unknown[]
   if (mode === 'transit') candidates = list(body.transits, true)
   else if (body.paths !== undefined) candidates = list(body.paths, true)

@@ -19,7 +19,7 @@ function TripIcon() {
 }
 
 const ui = {
-  name: 'trip-planner-ui', inject: ['remote.tripPlanner', 'slots', 'sidebarRightTabs'],
+  name: 'trip-planner-ui', inject: ['remote.tripPlanner', 'slots', 'sidebarRightTabs', 'sidebarRight'],
   apply(ctx: Context): void {
     const model = new TripClientModel(ctx.remote.tripPlanner, options => ctx.remote.$stream(options))
     const panel: TripPanelInjected = {
@@ -29,8 +29,15 @@ const ui = {
       onSavePlace: request => model.savePlace(request),
       onRenameSavedPlace: request => model.renameSavedPlace(request),
       onRemoveSavedPlace: target => model.removeSavedPlace(target),
+      onConnectSavedRoutes: () => model.connectSavedRoutes(),
+      onSaveSavedRoute: request => model.saveSavedRoute(request),
+      onRenameSavedRoute: request => model.renameSavedRoute(request),
+      onUpdateSavedRouteEndpoints: request => model.updateSavedRouteEndpoints(request),
+      onRemoveSavedRoute: id => model.removeSavedRoute(id),
+      onDismissChatRoute: sessionId => model.dismissChatRoute(sessionId),
     }
     void model.connectFavorites()
+    void model.connectSavedRoutes()
     ctx.effect(() => () => model.dispose())
     ctx.effect(() => {
       const style = document.createElement('style')
@@ -45,6 +52,20 @@ const ui = {
     ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
       { name: 'sidebar.right.pane.tab', key: panelId, inject: () => panel }, TripPanel,
     )))
+    ctx.effect(() => {
+      const mounted = ctx.sidebarRight.mounted
+      const follow = () => {
+        const sessionId = mounted.getSnapshot()
+        model.followChatRoute(sessionId, () => {
+          if (mounted.getSnapshot() !== sessionId) return
+          if (ctx.sidebarRight.active()?.kind === panelId && ctx.sidebarRight.isExpanded()) return
+          ctx.sidebarRight.openTab(panelId)
+        })
+      }
+      const unsubscribe = mounted.subscribe(follow)
+      follow()
+      return unsubscribe
+    })
   },
 }
 

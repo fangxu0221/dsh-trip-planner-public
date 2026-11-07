@@ -4,6 +4,7 @@ import type { Config } from './config.ts'
 import AmapTravelData from './providers/amap.ts'
 import * as dataTools from './tools/data.ts'
 import * as savedPlaces from './providers/saved-places.ts'
+import * as savedRoutes from './providers/saved-routes.ts'
 import * as savedPlaceTools from './tools/saved-places.ts'
 import RoutePlanner from './providers/route-planner.ts'
 import * as routeTools from './tools/routes.ts'
@@ -17,6 +18,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   await ctx.plugin(AmapTravelData, config)
   await ctx.plugin(dataTools)
   await ctx.plugin(savedPlaces, config)
+  await ctx.plugin(savedRoutes)
   await ctx.plugin(savedPlaceTools)
   await ctx.plugin(RoutePlanner, config)
   await ctx.plugin(routeTools)

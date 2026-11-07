@@ -1,112 +1,210 @@
-/** 收藏跨会话共享，搜索与路线查询按右栏标签页隔离。 */
+/** 收藏与常用路线跨会话共享，搜索与路线查询按右栏标签页隔离。 */
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { RemoteStreamCarrierError, type ClientRemote, type RemoteStream } from '@deepseek-ai/dsh-api-gateway/client'
 import type {} from '../../lib/typert.remote-client.js'
+import type { RemoteResult, RemoteStreamHandle } from '@deepseek-ai/dsh-typert-protocol'
 import type {
   PlacesSearchResult, PlanRouteQuery, PlanRouteResult, RenameSavedPlaceRequest, SavedPlacesView,
   SavedPlaceTarget, SavedPlaceWriteResult, SavePlaceRequest, SearchPlacesQuery,
+  RenameSavedRouteRequest, SavedRoutesView, SavedRouteWriteResult, SaveRouteRequest, UpdateSavedRouteEndpointsRequest, ChatRouteView,
 } from '../types.ts'
 
 type QueryState<T> = { status: 'idle' | 'loading' } | { status: 'success'; value: T } | { status: 'error'; message: string }
 type QueryResult<T> = { ok: true; value: T } | { ok: false; error: { message: string } }
 interface TripResults { search: PlacesSearchResult; route: PlanRouteResult }
-interface FavoritesState {
+interface CollectionState<T> {
   status: 'connecting' | 'live' | 'reconnecting' | 'failed'
-  view: SavedPlacesView | null
+  view: T | null
 }
+interface CollectionViews { favorites: SavedPlacesView; savedRoutes: SavedRoutesView }
+type Collection = keyof CollectionViews
 type WriteState = { status: 'idle' | 'pending' } | { status: 'success' | 'error'; message: string }
 type TripQueryState = { [Key in keyof TripResults]: QueryState<TripResults[Key]> }
-export interface TripClientState {
-  favorites: FavoritesState
+export type TripClientState = { [K in Collection]: CollectionState<CollectionViews[K]> } & {
   write: WriteState
+  routeWrite: WriteState
+  chatRoute: { sessionId: string; view: ChatRouteView } | null
 }
 type TripApi = ClientRemote['tripPlanner']
-type WriteCall = (signal: AbortSignal) => ReturnType<TripApi['savePlace']>
+
+export function chatRouteVersion(view: ChatRouteView): string {
+  return view.result ? view.revision + ':' + view.result.fetchedAt : ''
+}
 
 export class TripClientModel {
   readonly state = createSnapshotStore<TripClientState>({
     favorites: { status: 'connecting', view: null }, write: { status: 'idle' },
+    savedRoutes: { status: 'connecting', view: null }, routeWrite: { status: 'idle' },
+    chatRoute: null,
   })
   private readonly api: TripApi
   private readonly createStream: ClientRemote['$stream']
   private readonly lifetime = new AbortController()
-  private stream?: RemoteStream<SavedPlacesView>
-  private subscription = 0
+  private readonly streams: Partial<Record<Collection, Pick<RemoteStream<unknown>, 'dispose'>>> = {}
+  private readonly subscription = { favorites: 0, savedRoutes: 0 }
   private disposed = false
+  private chatSessionId?: string
+  private chatStream?: RemoteStream<ChatRouteView>
+  private readonly revealedChatRoutes = new Map<string, string>()
+  private readonly dismissedChatRoutes = new Map<string, string>()
 
   constructor(api: TripApi, createStream: ClientRemote['$stream']) {
     this.api = api
     this.createStream = createStream
   }
 
-  /** 重连保留最后一份收藏，收到新连接首帧后再替换。 */
-  async connectFavorites(): Promise<void> {
-    if (this.disposed) return
-    const subscription = ++this.subscription
-    this.state.update(state => { state.favorites.status = 'connecting' })
+  connectFavorites(): Promise<void> {
+    return this.connect('favorites', signal => this.api.followSavedPlaces(signal), '地点收藏')
+  }
+
+  connectSavedRoutes(): Promise<void> {
+    return this.connect('savedRoutes', signal => this.api.followSavedRoutes(signal), '常用路线')
+  }
+
+  /** 只跟随前台会话。会话切换时即刻丢弃旧帧，重连重复帧不会再打开右栏。 */
+  followChatRoute(sessionId: string | undefined, reveal: () => void): void {
+    if (this.disposed || this.chatSessionId === sessionId) return
+    this.chatSessionId = sessionId
+    void this.chatStream?.dispose().catch(() => {})
+    this.chatStream = undefined
+    this.state.update(state => { state.chatRoute = null })
+    if (!sessionId) return
+    const stream = this.createStream<ChatRouteView>({
+      name: '对话路线',
+      open: signal => this.api.followChatRoute({ sessionId }, signal),
+      ended: accepted => accepted ? new RemoteStreamCarrierError('对话路线订阅已断开') : new Error('未收到对话路线首帧'),
+    })
+    this.chatStream = stream
+    void this.readChatRoute(sessionId, stream, reveal)
+  }
+
+  /** 清空当前显示的对话结果，同时记住同一会话中被清除的版本。 */
+  dismissChatRoute(sessionId: string): void {
+    const current = this.state.getSnapshot().chatRoute
+    if (!current || current.sessionId !== sessionId) return
+    this.dismissedChatRoutes.set(sessionId, chatRouteVersion(current.view))
+    this.state.update(state => { state.chatRoute = null })
+  }
+
+  private async readChatRoute(sessionId: string, stream: RemoteStream<ChatRouteView>, reveal: () => void): Promise<void> {
     try {
-      await this.stream?.dispose()
-      if (subscription !== this.subscription) return
-      this.stream = this.createStream<SavedPlacesView>({
-        name: 'trip planner saved places',
-        open: signal => this.api.followSavedPlaces(signal),
-        ended: accepted => accepted ? new RemoteStreamCarrierError('收藏订阅已断开') : new Error('未收到收藏首帧'),
+      for await (const frame of stream) {
+        if (this.chatStream !== stream || this.disposed) return
+        frame.accept()
+        const view = frame.value
+        const version = chatRouteVersion(view)
+        if (version && this.dismissedChatRoutes.get(sessionId) === version) continue
+        this.state.update(state => { state.chatRoute = view.result ? { sessionId, view } : null })
+        if (!version) continue
+        if (this.revealedChatRoutes.get(sessionId) === version) continue
+        this.revealedChatRoutes.set(sessionId, version)
+        reveal()
+      }
+    } catch {
+      // 路线订阅失效时保留最后的有效结果，手动查询仍可使用。
+    }
+  }
+
+  /** 两条订阅独立排序。重连保留最后一份列表，收到新连接首帧后再替换。 */
+  private async connect<K extends Collection>(key: K,
+    open: (signal: AbortSignal) => RemoteStreamHandle<CollectionViews[K], never>, label: string): Promise<void> {
+    if (this.disposed) return
+    const subscription = ++this.subscription[key]
+    this.state.update(state => { state[key].status = 'connecting' })
+    try {
+      await this.streams[key]?.dispose()
+      if (subscription !== this.subscription[key]) return
+      const stream = this.createStream<CollectionViews[K]>({
+        name: label,
+        open,
+        ended: accepted => accepted ? new RemoteStreamCarrierError(label + '订阅已断开') : new Error('未收到' + label + '首帧'),
         carrierFailed: () => {
-          if (subscription === this.subscription) this.state.update(state => { state.favorites.status = 'reconnecting' })
+          if (subscription === this.subscription[key]) this.state.update(state => { state[key].status = 'reconnecting' })
         },
       })
+      this.streams[key] = stream
       let generation = -1
       let revision = -1
-      for await (const item of this.stream) {
-        if (subscription !== this.subscription) return
+      for await (const item of stream) {
+        if (subscription !== this.subscription[key]) return
         if (generation !== item.generation || item.value.revision > revision) {
           generation = item.generation
           revision = item.value.revision
-          this.state.update(state => { state.favorites = { status: 'live', view: item.value } })
+          this.state.update(state => {
+            state[key].status = 'live'
+            state[key].view = item.value
+          })
         }
         item.accept()
       }
     } catch {
-      if (subscription === this.subscription) this.state.update(state => { state.favorites.status = 'failed' })
+      if (subscription === this.subscription[key]) this.state.update(state => { state[key].status = 'failed' })
     }
   }
 
   savePlace(request: SavePlaceRequest): Promise<boolean> {
-    return this.write(signal => this.api.savePlace(request, signal),
+    return this.write<SavedPlaceWriteResult>('favorites', signal => this.api.savePlace(request, signal),
       result => result.changed ? '已收藏「' + result.alias + '」。' : '这个地点已收藏为「' + result.alias + '」。')
   }
 
   renameSavedPlace(request: RenameSavedPlaceRequest): Promise<boolean> {
-    return this.write(signal => this.api.renameSavedPlace(request, signal),
+    return this.write<SavedPlaceWriteResult>('favorites', signal => this.api.renameSavedPlace(request, signal),
       result => result.changed ? '已改名为「' + result.alias + '」。' : '收藏名称保持为「' + result.alias + '」。')
   }
 
   removeSavedPlace(target: SavedPlaceTarget): Promise<boolean> {
-    return this.write(signal => this.api.removeSavedPlace(target, signal),
+    return this.write<SavedPlaceWriteResult>('favorites', signal => this.api.removeSavedPlace(target, signal),
       result => '已取消收藏「' + result.alias + '」。')
+  }
+
+  saveSavedRoute(request: SaveRouteRequest): Promise<boolean> {
+    return this.write<SavedRouteWriteResult>('savedRoutes', signal => this.api.saveSavedRoute(request, signal),
+      result => '已保存常用路线「' + result.name + '」。')
+  }
+
+  renameSavedRoute(request: RenameSavedRouteRequest): Promise<boolean> {
+    return this.write<SavedRouteWriteResult>('savedRoutes', signal => this.api.renameSavedRoute(request, signal),
+      result => '路线已命名为「' + result.name + '」。')
+  }
+
+  updateSavedRouteEndpoints(request: UpdateSavedRouteEndpointsRequest): Promise<boolean> {
+    return this.write<SavedRouteWriteResult>('savedRoutes', signal => this.api.updateSavedRouteEndpoints(request, signal),
+      result => '已更新「' + result.name + '」的起终点。')
+  }
+
+  removeSavedRoute(id: string): Promise<boolean> {
+    return this.write<SavedRouteWriteResult>('savedRoutes', signal => this.api.removeSavedRoute(id, signal),
+      result => '已删除常用路线「' + result.name + '」。')
   }
 
   dispose(): void {
     this.disposed = true
-    this.subscription++
     this.lifetime.abort()
-    void this.stream?.dispose()
+    void this.chatStream?.dispose().catch(() => {})
+    this.revealedChatRoutes.clear()
+    this.dismissedChatRoutes.clear()
+    for (const key of ['favorites', 'savedRoutes'] as const) {
+      this.subscription[key]++
+      void this.streams[key]?.dispose()
+    }
   }
 
-  /** 写请求只更新反馈，收藏列表完全由订阅提供。 */
-  private async write(invoke: WriteCall, message: (result: SavedPlaceWriteResult) => string): Promise<boolean> {
+  /** 写请求只更新反馈，列表完全由订阅提供。 */
+  private async write<T>(collection: Collection, invoke: (signal: AbortSignal) => Promise<RemoteResult<T>>,
+    message: (result: T) => string): Promise<boolean> {
+    const key = collection === 'favorites' ? 'write' : 'routeWrite'
     const snapshot = this.state.getSnapshot()
-    if (this.disposed || snapshot.write.status === 'pending' || snapshot.favorites.status !== 'live') return false
-    this.state.update(state => { state.write = { status: 'pending' } })
+    if (this.disposed || snapshot[key].status === 'pending' || snapshot[collection].status !== 'live') return false
+    this.state.update(state => { state[key] = { status: 'pending' } })
     try {
       const result = await invoke(this.lifetime.signal)
       if (this.disposed) return false
       if (result.ok) {
-        this.state.update(state => { state.write = { status: 'success', message: message(result.value) } })
+        this.state.update(state => { state[key] = { status: 'success', message: message(result.value) } })
         return true
       }
       if (result.error.code === 'trip-planner/query-failed') {
-        this.state.update(state => { state.write = { status: 'error', message: result.error.message } })
+        this.state.update(state => { state[key] = { status: 'error', message: result.error.message } })
         return false
       }
     } catch {
@@ -114,9 +212,9 @@ export class TripClientModel {
     }
     if (!this.disposed) {
       this.state.update(state => {
-        state.write = { status: 'error', message: '保存结果暂未确认。收藏同步后，请核对列表再决定是否重试。' }
+        state[key] = { status: 'error', message: '保存结果暂未确认。同步后，请核对列表再决定是否重试。' }
       })
-      void this.connectFavorites()
+      void (collection === 'favorites' ? this.connectFavorites() : this.connectSavedRoutes())
     }
     return false
   }
