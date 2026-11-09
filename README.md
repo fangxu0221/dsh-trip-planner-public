@@ -9,6 +9,7 @@
 - 对话中的路线可同步到右栏；路线结果支持展开、收起、移除和撤销。
 - 对话中明确比较多种交通方式时，右栏可切换查看各方式的路线；未指定方式时，插件会引导模型先询问。
 - 地点搜索和详情可在本地缓存，选点时可快速选择有效缓存；公共交通方案摘要显示实际返回的线路名称。
+- 对话支持查询已选地点的基本信息，并通过每轮请求预算控制 Agent 发起的地图查询。
 
 ## 准备 Harness
 
@@ -66,5 +67,7 @@ pnpm.cmd dsh web --patch '<插件目录>/cordis.yml' --port 3083
 也可以明确要求比较公共交通和驾车，在右栏的交通方式标签间切换。若路线需求未指定交通方式，插件会提示模型先询问；实际回复仍取决于所用模型。对话路线保存在当前进程中，重启后需要重新查询。
 
 地点缓存保存在当前 Harness Home 的 JSON 存储中，可跨重启保留；默认搜索缓存有效 30 分钟，详情缓存有效 7 天，最多保留 200 条查询记录。插件配置可通过 `cacheEnabled`、`searchCacheTtlSeconds`、`detailsCacheTtlSeconds` 和 `cacheMaxEntries` 调整。缓存统计仅反映当前插件实例的调用，重启后归零。
+
+Agent 默认通过插件工具查询地图；每个 Agent 会话实例的每轮实际请求上限为搜索 2 次、详情 2 次和路线 4 次，有效缓存命中不占用该预算。手动面板查询不受此每轮限制；这也不是整个会话或所有子 Agent 的总额度。可在插件配置中调整 `agentMaxSearchCallsPerTurn`、`agentMaxDetailCallsPerTurn`、`agentMaxRouteCallsPerTurn`，或通过 `agentQueryBudgetEnabled` 和 `requireTripToolsForAgent` 控制预算及入口约束。达到上限时可分轮继续，或按需要调整配置。
 
 修改代码后，运行 `pnpm.cmd run typecheck` 检查服务端类型，再执行 `pnpm.cmd run build:web` 生成面板和协议，重启当前 Web 实例。

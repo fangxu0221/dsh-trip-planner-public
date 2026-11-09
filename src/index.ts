@@ -10,6 +10,9 @@ import RoutePlanner from './providers/route-planner.ts'
 import * as routeTools from './tools/routes.ts'
 import * as routePolicy from './prompts/route-policy.ts'
 import * as queryCache from './providers/query-cache.ts'
+import * as placePolicy from './prompts/place-policy.ts'
+import * as placeDetails from './tools/place-details.ts'
+import PlaceQueryPolicy from './policies/place-query.ts'
 
 export { Config } from './config.ts'
 export const name = 'trip-planner'
@@ -18,9 +21,12 @@ export const inject = ['tools', 'storageDomain', 'systemPrompt']
 /** 复用宿主的 JSON 领域服务，先恢复收藏，再挂载消费方；父插件负责递归释放。 */
 export async function apply(ctx: Context, config: Config): Promise<void> {
   await ctx.plugin(routePolicy)
+  await ctx.plugin(placePolicy, config)
+  await ctx.plugin(PlaceQueryPolicy, config)
   await ctx.plugin(queryCache, config)
   await ctx.plugin(AmapTravelData, config)
-  await ctx.plugin(dataTools)
+  await ctx.plugin(dataTools, config)
+  await ctx.plugin(placeDetails)
   await ctx.plugin(savedPlaces, config)
   await ctx.plugin(savedRoutes)
   await ctx.plugin(savedPlaceTools)

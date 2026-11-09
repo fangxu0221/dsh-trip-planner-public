@@ -17,6 +17,13 @@ export interface Config {
   searchCacheTtlSeconds: number
   detailsCacheTtlSeconds: number
   cacheMaxEntries: number
+  /** Agent 必须经本插件入口使用固定高德能力；不影响界面的正常内部查询。 */
+  requireTripToolsForAgent: boolean
+  /** 每个 Agent 轮次的实际高德请求预算，缓存命中不扣次数。 */
+  agentQueryBudgetEnabled: boolean
+  agentMaxSearchCallsPerTurn: number
+  agentMaxDetailCallsPerTurn: number
+  agentMaxRouteCallsPerTurn: number
 }
 
 export const Config = Schema.object({
@@ -29,4 +36,9 @@ export const Config = Schema.object({
   searchCacheTtlSeconds: Schema.number().step(1).min(1).max(86400).default(1800),
   detailsCacheTtlSeconds: Schema.number().step(1).min(1).max(2592000).default(604800),
   cacheMaxEntries: Schema.number().step(1).min(1).max(1000).default(200),
+  requireTripToolsForAgent: Schema.boolean().default(true),
+  agentQueryBudgetEnabled: Schema.boolean().default(true),
+  agentMaxSearchCallsPerTurn: Schema.number().step(1).min(1).max(20).default(2),
+  agentMaxDetailCallsPerTurn: Schema.number().step(1).min(1).max(20).default(2),
+  agentMaxRouteCallsPerTurn: Schema.number().step(1).min(1).max(20).default(4),
 })

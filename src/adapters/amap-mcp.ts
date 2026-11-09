@@ -10,6 +10,7 @@ import { normalizeRoutePayload } from './amap-routes.ts'
 import type { CacheRequest } from '../contracts/query-cache.ts'
 import type { CachedQuery } from '../services/query-cache.ts'
 import type {} from '../services/query-cache.ts'
+import type {} from '../policies/place-query.ts'
 
 interface CachePlan { request: CacheRequest; refresh: boolean; validate: (value: unknown, at: string) => Place[] }
 
@@ -173,6 +174,7 @@ export class AmapMcpAdapter {
       return { ...original, execute: async (parameters, inner) => {
         const call = async (active: AbortSignal) => {
           active.throwIfAborted()
+          this.ctx.placeQueryPolicy?.consume(inner.agent, plan?.request.kind ?? 'route')
           const contexts: CachedQuery['contexts'] = []
           let concludesTurn = false
           cache?.recordCall(plan?.request.kind ?? 'route')
@@ -199,27 +201,31 @@ export class AmapMcpAdapter {
     } })
     const callId = ToolCallId('trip-amap-' + randomUUID())
     // 这里是组合工具的内部调用，不重新当作一个模型根调用去选择 Native/PTC 呈现方式。
-    const prepared = await pipeline.prepare({ callId, name, arguments: args, signal,
-      ...execution.agent === undefined ? {} : { agent: execution.agent },
-      ...execution.toolSet === undefined ? {} : { toolSet: execution.toolSet },
-      ...execution.token === undefined ? {} : { parent: execution.token },
-      ...execution.rootCallId === undefined ? {} : { rootCallId: execution.rootCallId },
-    })
-    const outcome = prepared.kind === 'dispatch' ? await pipeline.dispatch(prepared.exec) : prepared
-    const result = await pipeline.complete(prepared.exec, outcome)
-    for (const context of result.additionalContexts ?? []) execution.deferContext?.(context)
-    signal.throwIfAborted()
-    if (result.isError) {
-      const message = result.error.message.replace(/[a-f0-9]{32}/gi, '[REDACTED]')
-        .replace(/([?&](?:key|token|secret)=)[^&\s"'<>]+/gi, '$1[REDACTED]')
-      throw new HarnessError('高德查询调用失败：' + message, 'TRIP_UPSTREAM_ERROR')
+    const run = async () => {
+      const prepared = await pipeline.prepare({ callId, name, arguments: args, signal,
+        ...execution.agent === undefined ? {} : { agent: execution.agent },
+        ...execution.toolSet === undefined ? {} : { toolSet: execution.toolSet },
+        ...execution.token === undefined ? {} : { parent: execution.token },
+        ...execution.rootCallId === undefined ? {} : { rootCallId: execution.rootCallId },
+      })
+      const outcome = prepared.kind === 'dispatch' ? await pipeline.dispatch(prepared.exec) : prepared
+      const result = await pipeline.complete(prepared.exec, outcome)
+      for (const context of result.additionalContexts ?? []) execution.deferContext?.(context)
+      signal.throwIfAborted()
+      if (result.isError) {
+        const message = result.error.message.replace(/[a-f0-9]{32}/gi, '[REDACTED]')
+          .replace(/([?&](?:key|token|secret)=)[^&\s"'<>]+/gi, '$1[REDACTED]')
+        throw new HarnessError('高德查询调用失败：' + message, 'TRIP_UPSTREAM_ERROR')
+      }
+      if (result.concludesTurn) execution.concludeTurn?.()
+      if (plan && loaded && !result.additionalContexts?.length && !result.concludesTurn) {
+        const places = plan.validate(result.value, fetchedAt)
+        await cache.store(plan.request, loaded, result.value, places, signal)
+      }
+      signal.throwIfAborted()
+      return { value: result.value, fetchedAt }
     }
-    if (result.concludesTurn) execution.concludeTurn?.()
-    if (plan && loaded && !result.additionalContexts?.length && !result.concludesTurn) {
-      const places = plan.validate(result.value, fetchedAt)
-      await cache.store(plan.request, loaded, result.value, places, signal)
-    }
-    signal.throwIfAborted()
-    return { value: result.value, fetchedAt }
+    const policy = this.ctx.placeQueryPolicy
+    return policy ? policy.authorize(callId, execution.agent, run) : run()
   }
 }

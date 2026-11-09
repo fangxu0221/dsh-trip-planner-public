@@ -9,7 +9,7 @@ import TravelDataService, { type QueryExecution } from '../services/travel-data.
 
 /** 挂载后提供 ctx.travelData；适配器只负责外部调用，业务输入规则集中在本类。 */
 export default class AmapTravelData extends TravelDataService {
-  static inject = ['tools', 'queryCache']
+  static inject = ['tools', 'queryCache', 'placeQueryPolicy']
   private readonly settings: Config
   private readonly adapter: AmapMcpAdapter
   private readonly lifetime = new AbortController()

@@ -2,11 +2,21 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type {} from '../services/travel-data.ts'
+import type { Config } from '../config.ts'
 
 export const name = 'trip-query-tools'
 export const inject = ['tools', 'travelData']
 
 const nullableText = { oneOf: [{ type: 'string' }, { type: 'null' }] } as const
+
+/** 搜索和只读详情共用同一个地点输出结构，不扩充尚未支持的营业时间等字段。 */
+export const placeOutputSchema = { type: 'object', additionalProperties: false, properties: {
+  id: { type: 'string', required: true }, name: { type: 'string', required: true },
+  address: { ...nullableText, required: true }, city: { ...nullableText, required: true },
+  coordinates: { required: true, oneOf: [{ type: 'null' }, { type: 'object', additionalProperties: false, properties: {
+    longitude: { type: 'number', required: true }, latitude: { type: 'number', required: true },
+  } }] },
+} } as const
 
 /** 与业务 DTO 对应的运行时输出声明；缺失值明确保留为 null。 */
 export const searchOutputSchema = {
@@ -19,26 +29,22 @@ export const searchOutputSchema = {
     } },
     sourceCount: { type: 'integer', required: true }, returned: { type: 'integer', required: true },
     truncated: { type: 'boolean', required: true },
-    places: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
-      id: { type: 'string', required: true }, name: { type: 'string', required: true },
-      address: { ...nullableText, required: true }, city: { ...nullableText, required: true },
-      coordinates: { required: true, oneOf: [{ type: 'null' }, { type: 'object', additionalProperties: false, properties: {
-        longitude: { type: 'number', required: true }, latitude: { type: 'number', required: true },
-      } }] },
-    } } },
+    places: { type: 'array', required: true, items: placeOutputSchema },
     warnings: { type: 'array', required: true, items: { type: 'string' } },
   },
 } as const
 
 /** 注册的工具归当前子插件所有，卸载时由框架自动注销。 */
-export function apply(ctx: Context): void {
+export function apply(ctx: Context, config: Config): void {
   ctx.tools.register(defineTool({
     name: 'trip_search_places',
-    description: '在指定城市搜索出行候选地点，返回真实地点 ID、名称、地址和来源。省略城市使用插件默认城市；需要经纬度时还应查询地点详情。',
+    description: '在指定城市搜索地点候选，返回真实 ID、名称、地址和来源。省略城市使用默认城市。每次最多返回 ' + config.maxResults
+      + ' 个，limit 可省略。泛问游玩推荐时先搜索一次，候选不合适才有目的地补充一次；已有足够候选就回复，不批量查详情、营业时间或路线。确需查询选定地点的基本信息时使用 trip_get_place_details，收藏和规划路线会自行按需补查详情。',
     parameters: {
       keywords: { type: 'string', required: true, description: '地点名称或游玩关键词，例如广州塔、公园。' },
       city: { type: 'string', description: '限定搜索城市，例如广州。' },
-      limit: { type: 'integer', description: '返回数量，不能超过插件 maxResults 配置。' },
+      limit: { type: 'integer', enum: Array.from({ length: config.maxResults }, (_, index) => index + 1),
+        description: '可省略，默认 ' + config.maxResults + ' 个；只能填写 1 到 ' + config.maxResults + ' 的整数。' },
       refresh: { type: 'boolean', description: '用户明确要求重新查询时设为 true，跳过已有地点搜索缓存。' },
     },
     output: {

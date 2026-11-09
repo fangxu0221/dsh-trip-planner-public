@@ -9,7 +9,7 @@ export function apply(ctx: Context): void {
   ctx.systemPrompt.section({
     name: 'trip-planner:route-policy', order: 3200, interpolate: false,
     text: `出行路线规划规则：
-- 出行需求优先使用 trip_search_places、收藏工具和 trip_plan_route。不要自行直接调用底层高德路线工具绕过交通方式确认及右栏结果同步。
+- 出行需求优先使用 trip_search_places、trip_get_place_details、收藏工具和 trip_plan_route。不要自行直接调用底层高德工具绕过缓存、交通方式确认及右栏结果同步。
 - 调用 trip_plan_route 前，必须确认用户希望使用的交通方式。支持公共交通、驾车、骑行、步行。
 - 用户本次明确指定，或当前连续对话中用户已经明确且仍然适用的交通方式，可以直接使用；模型之前自行推荐的方式不算用户选择。
 - 用户只说“怎么去”“看看路线”“从学校到某地”，且交通方式不明确时，先询问“你想乘坐公共交通、驾车、骑行还是步行？”，等待用户回答后再调用路线工具。不得默认驾车，也不得用距离、收藏或之前的工具结果擅自推断用户选择。
