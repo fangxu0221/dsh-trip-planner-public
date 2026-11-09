@@ -106,9 +106,12 @@ export interface PlanRouteResult {
 }
 
 export interface ChatRouteRequest { sessionId: string }
+/** 同一轮、同一起终点的交通方式结果。条目版本按发起顺序递增。 */
+export interface ChatRouteItem { revision: number; result: PlanRouteResult }
 export interface ChatRouteView {
   revision: number
-  result: PlanRouteResult | null
+  groupId: string
+  results: ChatRouteItem[]
 }
 
 export type SavedRouteEndpoint = { kind: 'saved'; savedPlaceId: string; label: string }

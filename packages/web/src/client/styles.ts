@@ -172,6 +172,20 @@ export const styles = `
 .trip-planner-edit-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .trip-planner-error { color: var(--dsw-alias-state-error-primary, #ad2828); overflow-wrap: anywhere; }
 .trip-planner-route-title { font-weight: 650; overflow-wrap: anywhere; }
+.trip-planner-chat-modes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.trip-planner-chat-modes [role="tab"] {
+  --trip-choice: #765ed2;
+  display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  border: 0; border-radius: 10px; padding: 9px 11px; font: inherit; font-size: 13px;
+  color: var(--trip-text); background: var(--trip-hover); cursor: pointer;
+}
+.trip-planner-chat-modes [data-mode="walking"] { --trip-choice: #168477; }
+.trip-planner-chat-modes [data-mode="bicycling"] { --trip-choice: #ad770d; }
+.trip-planner-chat-modes [data-mode="driving"] { --trip-choice: #ba5367; }
+.trip-planner-chat-modes [aria-selected="true"] { background: color-mix(in srgb, var(--trip-choice) 16%, var(--trip-surface)); box-shadow: inset 0 -2px var(--trip-choice); }
+.trip-planner-chat-modes .trip-planner-glyph { color: var(--trip-choice); }
+.trip-planner-chat-modes small { color: var(--trip-muted); }
+.trip-planner-chat-modes [role="tab"]:focus-visible { outline: 2px solid var(--trip-choice); outline-offset: 2px; }
 .trip-planner-routes { margin-top: 12px; font-size: 14px; }
 .trip-planner-results-bar, .trip-planner-query-feedback, .trip-planner-removed {
   display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: space-between;

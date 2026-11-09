@@ -7,7 +7,8 @@ import type {
   RenameSavedRouteRequest, RouteMode, SavedPlaceOption, SavedRouteEndpoint, SavedRouteOption,
   SaveRouteRequest, UpdateSavedRouteEndpointsRequest,
 } from '../types.ts'
-import { chatRouteVersion, type TripClientState, type TripQueries } from './model.ts'
+import { type TripClientState, type TripQueries } from './model.ts'
+import { ChatRouteResults } from './ChatRouteResults.tsx'
 import { PlacePicker, savedSelection, type Selection } from './PlacePicker.tsx'
 import { RouteResults } from './RouteResults.tsx'
 import { SavedPlacesList, type SavedPlaceActions } from './SavedPlacesList.tsx'
@@ -60,9 +61,9 @@ export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...ac
   const [resultSource, setResultSource] = useState<'manual' | 'chat'>('manual')
   const seenChatVersion = useRef('')
   const conversation = chatRoute && chatRoute.sessionId === sessionId ? chatRoute.view : undefined
-  const chatResult = conversation?.result
-  const chatVersion = conversation ? chatRouteVersion(conversation) : ''
-  const showChat = !!chatResult && resultSource === 'chat'
+  const hasChat = !!conversation?.results.length
+  const chatVersion = hasChat ? conversation.groupId : ''
+  const showChat = hasChat && resultSource === 'chat'
   const places = favorites.view?.places ?? []
   const origin = currentSelection(endpoints.origin, places)
   const destination = currentSelection(endpoints.destination, places)
@@ -229,14 +230,14 @@ export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...ac
         </div>}
       </section>
       {expanded !== 'routes' && <RouteWriteFeedback routeWrite={routeWrite} />}
-      {chatResult && <div className="trip-planner-route-source">
+      {hasChat && <div className="trip-planner-route-source">
         {showChat ? <strong><TripGlyph name="routes" />来自对话</strong>
           : <button type="button" onClick={() => setResultSource('chat')}>查看对话路线</button>}
         {showChat && !missingEndpoint && route.status === 'success' &&
           <button type="button" onClick={() => setResultSource('manual')}>查看手动路线</button>}
       </div>}
-      {chatResult && <div hidden={!showChat}>
-        <RouteResults key={'chat-' + chatVersion} result={chatResult} onClear={clearRoute} />
+      {hasChat && <div hidden={!showChat}>
+        <ChatRouteResults key={'chat-' + chatVersion} view={conversation} onClear={clearRoute} />
       </div>}
       {!missingEndpoint && route.status === 'success' && <div hidden={showChat}>
         <RouteResults key={route.value.fetchedAt} result={route.value} onClear={clearRoute}>

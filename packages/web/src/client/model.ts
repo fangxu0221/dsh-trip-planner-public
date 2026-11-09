@@ -28,7 +28,7 @@ export type TripClientState = { [K in Collection]: CollectionState<CollectionVie
 type TripApi = ClientRemote['tripPlanner']
 
 export function chatRouteVersion(view: ChatRouteView): string {
-  return view.result ? view.revision + ':' + view.result.fetchedAt : ''
+  return view.results.length ? view.groupId + ':' + view.revision : ''
 }
 
 export class TripClientModel {
@@ -78,11 +78,11 @@ export class TripClientModel {
     void this.readChatRoute(sessionId, stream, reveal)
   }
 
-  /** 清空当前显示的对话结果，同时记住同一会话中被清除的版本。 */
+  /** 清空整组对话路线，同组晚到方式和重连快照也保持隐藏。 */
   dismissChatRoute(sessionId: string): void {
     const current = this.state.getSnapshot().chatRoute
     if (!current || current.sessionId !== sessionId) return
-    this.dismissedChatRoutes.set(sessionId, chatRouteVersion(current.view))
+    this.dismissedChatRoutes.set(sessionId, current.view.groupId)
     this.state.update(state => { state.chatRoute = null })
   }
 
@@ -93,11 +93,11 @@ export class TripClientModel {
         frame.accept()
         const view = frame.value
         const version = chatRouteVersion(view)
-        if (version && this.dismissedChatRoutes.get(sessionId) === version) continue
-        this.state.update(state => { state.chatRoute = view.result ? { sessionId, view } : null })
+        if (version && this.dismissedChatRoutes.get(sessionId) === view.groupId) continue
+        this.state.update(state => { state.chatRoute = view.results.length ? { sessionId, view } : null })
         if (!version) continue
-        if (this.revealedChatRoutes.get(sessionId) === version) continue
-        this.revealedChatRoutes.set(sessionId, version)
+        if (this.revealedChatRoutes.get(sessionId) === view.groupId) continue
+        this.revealedChatRoutes.set(sessionId, view.groupId)
         reveal()
       }
     } catch {

@@ -92,9 +92,9 @@ export function renderRoute(value: PlanRouteResult): string {
 export function apply(ctx: Context): void {
   ctx.tools.register(defineTool({
     name: 'trip_plan_route',
-    description: '规划已选定的两点之间一种交通方式的路线。起终点使用收藏别名或真实高德 POI ID，地点不明确时先搜索并让用户选择。支持步行、骑行、驾车、公交/地铁。按乘车顺序说明线路、方向、站数、下车站和出口，只采用工具返回的字段。',
+    description: '规划已选定的两点之间一种交通方式的路线。交通方式不明确时必须先询问用户，等待回答后调用，不得默认驾车。当前连续对话中用户已明确的方式可沿用；仅在用户明确要求比较或授权选择时查询相应方式。起终点使用收藏别名或真实高德 POI ID，地点不明确时先搜索并让用户选择。支持步行、骑行、驾车、公共交通。按乘车顺序说明线路、方向、站数、下车站和出口，只采用工具返回的字段。',
     parameters: { origin: endpointInput, destination: endpointInput,
-      mode: { type: 'string', enum: routeModes, required: true, description: 'walking 步行，bicycling 骑行，driving 驾车，transit 公共交通。' } },
+      mode: { type: 'string', enum: routeModes, required: true, description: '用户明确选择或授权的交通方式。未明确时先询问，不设默认值。walking 步行，bicycling 骑行，driving 驾车，transit 公共交通。' } },
     output: { schema: routeOutputSchema, render: (_args, value) => [{ type: 'text', text: renderRoute(value) }] },
     execute: (args, execution) => ctx.routePlanner.plan(args, execution),
   }))
