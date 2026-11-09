@@ -6,12 +6,14 @@ import type {} from '../../../src/services/travel-data.ts'
 import type {} from '../../../src/services/saved-places.ts'
 import type {} from '../../../src/services/route-planner.ts'
 import type {} from '../../../src/services/saved-routes.ts'
+import type {} from '../../../src/services/query-cache.ts'
 import { SessionRoutes } from './session-routes.ts'
 import type {
   PlacesSearchResult, PlanRouteQuery, PlanRouteResult, RenameSavedPlaceRequest, SavedPlaceOption, SavedPlacesView,
   SavedPlaceTarget, SavedPlaceWriteResult, SavePlaceRequest, SearchPlacesQuery,
   RenameSavedRouteRequest, SavedRoutesView, SavedRouteWriteResult, SaveRouteRequest, UpdateSavedRouteEndpointsRequest,
   ChatRouteRequest, ChatRouteView,
+  CachedPlacesQuery, CachedPlacesView, CachePlaceRequest, QueryCacheStats,
 } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -21,7 +23,7 @@ declare module '@deepseek-ai/cordis' {
 type ChangedEvent = 'trip/saved-places-changed' | 'trip/saved-routes-changed'
 
 export class TripPlannerController extends TypertRemoteService {
-  static inject = ['typert', 'travelData', 'savedPlaces', 'routePlanner', 'savedRoutes', 'sessions']
+  static inject = ['typert', 'travelData', 'savedPlaces', 'routePlanner', 'savedRoutes', 'sessions', 'queryCache']
   private readonly chatRoutes: SessionRoutes
   private readonly revision: Record<ChangedEvent, number> = {
     'trip/saved-places-changed': 0, 'trip/saved-routes-changed': 0,
@@ -39,6 +41,26 @@ export class TripPlannerController extends TypertRemoteService {
   @Remote('searchPlaces')
   async searchPlaces(query: SearchPlacesQuery, signal: AbortSignal): Promise<PlacesSearchResult> {
     return this.query(signal, () => this.ctx.travelData.searchPlaces(query, { signal }))
+  }
+
+  @Remote('listCachedPlaces')
+  async listCachedPlaces(query: CachedPlacesQuery, signal: AbortSignal): Promise<CachedPlacesView> {
+    return this.query(signal, () => this.ctx.queryCache.listCachedPlaces(query, signal))
+  }
+
+  @Remote('touchCachedPlace')
+  async touchCachedPlace(request: CachePlaceRequest, signal: AbortSignal): Promise<{ updated: boolean }> {
+    return this.query(signal, async () => { await this.ctx.queryCache.touchPlace(request.placeId, signal); return { updated: true } })
+  }
+
+  @Remote('cacheStats')
+  async cacheStats(signal: AbortSignal): Promise<QueryCacheStats> {
+    return this.query(signal, async () => this.ctx.queryCache.stats())
+  }
+
+  @Remote('clearPlaceCache')
+  async clearPlaceCache(signal: AbortSignal): Promise<QueryCacheStats> {
+    return this.query(signal, async () => { await this.ctx.queryCache.clear(signal); return this.ctx.queryCache.stats() })
   }
 
   @Remote('listSavedPlaces')

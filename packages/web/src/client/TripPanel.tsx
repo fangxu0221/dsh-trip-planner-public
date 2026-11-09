@@ -50,7 +50,7 @@ export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...ac
   const shortcutsId = useId()
   const { favorites, write, savedRoutes, routeWrite, chatRoute } = useTrip(state => state)
   const [queries] = useState(createQueries)
-  const { search, route } = useSyncExternalStore(queries.state.subscribe, queries.state.getSnapshot)
+  const { search, route, cached, cacheStats } = useSyncExternalStore(queries.state.subscribe, queries.state.getSnapshot)
   const [picker, setPicker] = useState<Endpoint | 'add-favorite' | null>(null)
   const [expanded, setExpanded] = useState<'favorites' | 'routes' | null>(null)
   const [repairId, setRepairId] = useState<string | null>(null)
@@ -118,6 +118,8 @@ export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...ac
   function closePicker() {
     setPicker(null)
     queries.reset('search')
+    queries.reset('cached')
+    queries.reset('cacheStats')
   }
 
   function select(selection: Selection) {
@@ -285,7 +287,7 @@ export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...ac
     </footer>
     {picker && tab.visible && <PlacePicker key={picker} title={picker === 'add-favorite' ? '添加地点收藏' : '选择' + endpointLabels[picker]}
       purpose={picker}
-      search={search} favorites={favorites} write={write} queries={queries}
+      search={search} cached={cached} cacheStats={cacheStats} favorites={favorites} write={write} queries={queries}
       onClose={closePicker} onSelect={picker === 'add-favorite' ? undefined : select} {...favoriteActions} />}
   </section>
 }

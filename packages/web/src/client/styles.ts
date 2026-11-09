@@ -172,6 +172,25 @@ export const styles = `
 .trip-planner-edit-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .trip-planner-error { color: var(--dsw-alias-state-error-primary, #ad2828); overflow-wrap: anywhere; }
 .trip-planner-route-title { font-weight: 650; overflow-wrap: anywhere; }
+.trip-planner-cache-popover { position: relative; min-width: 0; }
+.trip-planner-cache-dropdown {
+  position: relative; z-index: 1; margin-top: 6px;
+  max-height: min(280px, 42vh); overflow-y: auto; padding: 8px; border-radius: 12px;
+  background: var(--trip-surface); box-shadow: 0 8px 28px #0002; border: 1px solid var(--trip-border);
+}
+.trip-planner-cache-dropdown > p { display: flex; flex-wrap: wrap; gap: 4px 10px; justify-content: space-between; margin: 0 4px 7px; font-size: 12px; }
+.trip-planner-cache-dropdown small { color: var(--trip-muted); font-size: 11px; }
+.trip-planner-cache-dropdown ul { list-style: none; margin: 0; padding: 0; }
+.trip-planner-cache-dropdown [role="option"] {
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px; border: 0; border-radius: 8px;
+  font: inherit; font-size: 13px; text-align: start; color: var(--trip-text); background: transparent; cursor: pointer;
+}
+.trip-planner-cache-dropdown [role="option"]:hover, .trip-planner-cache-dropdown [aria-selected="true"] { background: var(--trip-hover); }
+.trip-planner-cache-dropdown [role="option"] > span { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.trip-planner-cache-dropdown .trip-planner-glyph { color: var(--trip-accent); }
+.trip-planner-cache-tools { margin-block: 8px; color: var(--trip-muted); font-size: 12px; }
+.trip-planner-cache-tools summary { cursor: pointer; width: fit-content; }
+.trip-planner-cache-tools button { margin: 6px 8px 0 0; border: 0; padding: 5px 8px; border-radius: 6px; background: var(--trip-hover); color: var(--trip-accent); cursor: pointer; }
 .trip-planner-chat-modes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .trip-planner-chat-modes [role="tab"] {
   --trip-choice: #765ed2;
@@ -218,23 +237,28 @@ export const styles = `
   border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-2px) rotate(45deg);
 }
 .trip-planner-routes details[open] > summary .trip-planner-chevron { transform: translateY(2px) rotate(225deg); }
-.trip-planner-mode-sequence, .trip-planner-step-heading { display: flex; align-items: center; gap: 5px 7px; flex-wrap: wrap; }
+.trip-planner-line-sequence, .trip-planner-step-heading { display: flex; align-items: center; gap: 5px 7px; flex-wrap: wrap; }
+.trip-planner-line-leg { display: inline-flex; align-items: center; gap: 4px 6px; flex-wrap: wrap; min-width: 0; }
+.trip-planner-line-name { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
+.trip-planner-line-arrow, .trip-planner-line-or { color: var(--trip-muted); font-size: 12px; }
+.trip-planner-summary-meta { display: flex; flex-wrap: wrap; gap: 4px; color: var(--trip-muted); }
+.trip-planner-summary-meta > * + *::before { content: '·'; margin-inline: 2px 6px; }
+.trip-planner-mode, .trip-planner-line-name { --trip-mode: #6b7280; }
 .trip-planner-mode {
-  --trip-mode: #6b7280;
   display: inline-flex; gap: 4px; align-items: center; padding: 2px 6px; border-radius: 6px;
   background: color-mix(in srgb, var(--trip-mode) 14%, var(--trip-surface));
   color: var(--trip-text); font-size: 12px;
 }
-.trip-planner-mode[data-mode="walking"] { --trip-mode: #168477; }
-.trip-planner-mode[data-mode="metro"] { --trip-mode: #765ed2; }
-.trip-planner-mode[data-mode="transit"] { --trip-mode: #765ed2; }
-.trip-planner-mode[data-mode="bus"] { --trip-mode: #2574c0; }
-.trip-planner-mode[data-mode="bicycling"] { --trip-mode: #ad770d; }
-.trip-planner-mode[data-mode="driving"] { --trip-mode: #ba5367; }
-.trip-planner-mode[data-mode="railway"] { --trip-mode: #3857a6; }
+:is(.trip-planner-mode, .trip-planner-line-name)[data-mode="walking"] { --trip-mode: #168477; }
+:is(.trip-planner-mode, .trip-planner-line-name)[data-mode="metro"] { --trip-mode: #765ed2; }
+:is(.trip-planner-mode, .trip-planner-line-name)[data-mode="transit"] { --trip-mode: #765ed2; }
+:is(.trip-planner-mode, .trip-planner-line-name)[data-mode="bus"] { --trip-mode: #2574c0; }
+:is(.trip-planner-mode, .trip-planner-line-name)[data-mode="bicycling"] { --trip-mode: #ad770d; }
+:is(.trip-planner-mode, .trip-planner-line-name)[data-mode="driving"] { --trip-mode: #ba5367; }
+:is(.trip-planner-mode, .trip-planner-line-name)[data-mode="railway"] { --trip-mode: #3857a6; }
 .trip-planner-glyph { display: block; flex: none; }
-.trip-planner-mode .trip-planner-glyph { color: color-mix(in srgb, var(--trip-mode) 64%, var(--trip-text)); }
-.trip-planner-fastest { padding: 1px 5px; border-radius: 6px; background: var(--trip-hover); color: var(--trip-accent); }
+.trip-planner-mode .trip-planner-glyph, .trip-planner-line-name .trip-planner-glyph { color: color-mix(in srgb, var(--trip-mode) 64%, var(--trip-text)); }
+.trip-planner-fastest { color: var(--trip-muted); }
 .trip-planner-transfer-count { color: var(--trip-muted); }
 .trip-planner-alternative-body { padding: 8px 11px 11px; }
 .trip-planner-alternative p { margin: 4px 0; overflow-wrap: anywhere; }

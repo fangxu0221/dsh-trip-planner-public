@@ -9,7 +9,7 @@ import TravelDataService, { type QueryExecution } from '../services/travel-data.
 
 /** 挂载后提供 ctx.travelData；适配器只负责外部调用，业务输入规则集中在本类。 */
 export default class AmapTravelData extends TravelDataService {
-  static inject = ['tools']
+  static inject = ['tools', 'queryCache']
   private readonly settings: Config
   private readonly adapter: AmapMcpAdapter
   private readonly lifetime = new AbortController()
@@ -42,15 +42,17 @@ export default class AmapTravelData extends TravelDataService {
   }
 
   override async searchPlaces(query: SearchPlacesQuery, execution: QueryExecution): Promise<PlacesSearchResult> {
+    if (query.refresh !== undefined && typeof query.refresh !== 'boolean') throw new HarnessError('刷新选项不合法。', 'TRIP_INVALID_QUERY')
     const resolved = this.resolveQuery(query)
-    return this.query(execution, signal => this.adapter.searchPlaces(resolved, execution, signal))
+    return this.query(execution, signal => this.adapter.searchPlaces(resolved, execution, signal, query.refresh))
   }
 
   /** 详情与搜索共用超时、取消和卸载机制，不另建 MCP 连接。 */
-  override async getPlaceDetails(placeId: string, execution: QueryExecution): Promise<PlaceDetailsResult> {
+  override async getPlaceDetails(placeId: string, execution: QueryExecution, options?: { refresh?: boolean }): Promise<PlaceDetailsResult> {
+    if (options?.refresh !== undefined && typeof options.refresh !== 'boolean') throw new HarnessError('刷新选项不合法。', 'TRIP_INVALID_QUERY')
     const id = typeof placeId === 'string' ? placeId.trim() : ''
     if (!id || id.length > 100) throw new HarnessError('地点 ID 不能为空，且最多 100 个字符。', 'TRIP_INVALID_QUERY')
-    return this.query(execution, signal => this.adapter.getPlaceDetails(id, execution, signal))
+    return this.query(execution, signal => this.adapter.getPlaceDetails(id, execution, signal, options?.refresh))
   }
 
   /** 数据服务也校验直接调用，避免其他消费方绕过路线服务后传入非法坐标。 */

@@ -32,7 +32,7 @@ export default abstract class TravelDataService extends Service {
   abstract searchPlaces(query: SearchPlacesQuery, execution: QueryExecution): Promise<PlacesSearchResult>
 
   /** 按已选择的真实 POI ID 获取详情，供收藏使用，不接受模型自行拼出的地点字段。 */
-  abstract getPlaceDetails(placeId: string, execution: QueryExecution): Promise<PlaceDetailsResult>
+  abstract getPlaceDetails(placeId: string, execution: QueryExecution, options?: { refresh?: boolean }): Promise<PlaceDetailsResult>
 
   /** 查询已解析端点之间的一种交通方式；不负责收藏别名解析。 */
   abstract planRoute(query: ResolvedRouteQuery, execution: QueryExecution): Promise<RouteDataResult>

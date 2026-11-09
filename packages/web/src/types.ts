@@ -5,7 +5,14 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
   }
 }
 
-export interface SearchPlacesQuery { keywords: string; city?: string }
+export interface SearchPlacesQuery { keywords: string; city?: string; refresh?: boolean }
+export interface CachedPlacesQuery { keywords?: string; city?: string }
+export interface CachedPlaceOption { placeId: string; name: string; address: string | null; city: string | null; fetchedAt: string }
+export interface CachedPlacesView { places: CachedPlaceOption[] }
+export interface CachePlaceRequest { placeId: string }
+export interface QueryCacheStats {
+  entries: number; cacheHits: number; joinedRequests: number; searchCalls: number; detailCalls: number; routeCalls: number; writeFailures: number
+}
 
 interface Coordinates { longitude: number; latitude: number }
 

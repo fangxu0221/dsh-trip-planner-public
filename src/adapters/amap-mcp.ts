@@ -7,6 +7,11 @@ import type { Coordinates, Place, PlaceDetailsResult, PlacesSearchResult, Resolv
 import type { QueryExecution } from '../services/travel-data.ts'
 import type { ResolvedRouteQuery, RouteDataResult, RouteMode } from '../contracts/routes.ts'
 import { normalizeRoutePayload } from './amap-routes.ts'
+import type { CacheRequest } from '../contracts/query-cache.ts'
+import type { CachedQuery } from '../services/query-cache.ts'
+import type {} from '../services/query-cache.ts'
+
+interface CachePlan { request: CacheRequest; refresh: boolean; validate: (value: unknown, at: string) => Place[] }
 
 /** 固定为已验证的只读搜索工具，不允许模型指定任意内部工具名。 */
 export const AMAP_SEARCH_TOOL = 'mcp__amap__maps_text_search'
@@ -103,12 +108,14 @@ export function normalizePlaceDetails(value: unknown, placeId: string, fetchedAt
 
 /** 内部能力仍经过共享的校验、权限守卫、取消和后置处理流水线。 */
 export class AmapMcpAdapter {
-  private readonly pipeline: ToolExecutionPipeline
   private readonly tools: Context['tools']
+  private readonly ctx: Context
+  private readonly identities = new WeakMap<object, number>()
+  private identity = 0
 
   constructor(ctx: Context) {
+    this.ctx = ctx
     this.tools = ctx.tools
-    this.pipeline = new ToolExecutionPipeline(ctx)
   }
 
   /**
@@ -118,15 +125,17 @@ export class AmapMcpAdapter {
    * @param signal 提供方融合取消、卸载和超时后的信号。
    * @returns 高德搜索的业务结果。
    */
-  async searchPlaces(query: ResolvedSearchPlacesQuery, execution: QueryExecution, signal: AbortSignal): Promise<PlacesSearchResult> {
-    const value = await this.invoke(AMAP_SEARCH_TOOL, { keywords: query.keywords, city: query.city, citylimit: true }, execution, signal)
-    return normalizeSearchResult(value, query, new Date().toISOString())
+  async searchPlaces(query: ResolvedSearchPlacesQuery, execution: QueryExecution, signal: AbortSignal, refresh = false): Promise<PlacesSearchResult> {
+    const { value, fetchedAt } = await this.invoke(AMAP_SEARCH_TOOL, { keywords: query.keywords, city: query.city, citylimit: true }, execution, signal,
+      { request: { kind: 'search', ...query }, refresh, validate: (value, at) => normalizeSearchResult(value, query, at).places })
+    return normalizeSearchResult(value, query, fetchedAt)
   }
 
   /** 固定调用官方只读详情工具，保留与搜索相同的权限和嵌套上下文。 */
-  async getPlaceDetails(placeId: string, execution: QueryExecution, signal: AbortSignal): Promise<PlaceDetailsResult> {
-    const value = await this.invoke(AMAP_DETAILS_TOOL, { id: placeId }, execution, signal)
-    return normalizePlaceDetails(value, placeId, new Date().toISOString())
+  async getPlaceDetails(placeId: string, execution: QueryExecution, signal: AbortSignal, refresh = false): Promise<PlaceDetailsResult> {
+    const { value, fetchedAt } = await this.invoke(AMAP_DETAILS_TOOL, { id: placeId }, execution, signal,
+      { request: { kind: 'details', placeId }, refresh, validate: (value, at) => [normalizePlaceDetails(value, placeId, at).place] })
+    return normalizePlaceDetails(value, placeId, fetchedAt)
   }
 
   /** 同一调用只选择一种路线方式，公交城市取端点真实字段。 */
@@ -134,27 +143,70 @@ export class AmapMcpAdapter {
     const location = (point: ResolvedRouteQuery['origin']) => point.coordinates.longitude + ',' + point.coordinates.latitude
     const args: Record<string, unknown> = { origin: location(query.origin), destination: location(query.destination) }
     if (query.mode === 'transit') { args.city = query.origin.city; args.cityd = query.destination.city }
-    const value = await this.invoke(AMAP_ROUTE_TOOLS[query.mode], args, execution, signal)
-    return normalizeRoutePayload(payload(value), query.mode, new Date().toISOString())
+    const { value, fetchedAt } = await this.invoke(AMAP_ROUTE_TOOLS[query.mode], args, execution, signal)
+    return normalizeRoutePayload(payload(value), query.mode, fetchedAt)
   }
 
-  private async invoke(name: string, args: Record<string, unknown>, execution: QueryExecution, signal: AbortSignal): Promise<unknown> {
+  private objectId(value: object | undefined): number {
+    if (!value) return 0
+    let id = this.identities.get(value)
+    if (id === undefined) { id = ++this.identity; this.identities.set(value, id) }
+    return id
+  }
+
+  private async invoke(name: string, args: Record<string, unknown>, execution: QueryExecution, signal: AbortSignal,
+    plan?: CachePlan): Promise<{ value: unknown; fetchedAt: string }> {
     signal.throwIfAborted()
     // 宿主允许可选 MCP 插件加载失败后继续启动，所以业务工具必须明确识别未就绪状态。
     // 使用当前调用方的视图检查，不切换到全局作用域或忽略权限限制。
     if (!this.tools.get(name, execution.agent)) {
       throw new HarnessError('高德地图连接尚未就绪，当前会话无法使用地点查询。请检查 cordis.yml 中的高德 URL、Key 和启动日志。', 'TRIP_MCP_NOT_READY')
     }
+    const cache = this.ctx.queryCache
+    let loaded: CachedQuery | undefined
+    let fetchedAt = new Date().toISOString()
+    // 每个请求仍独立执行原能力的准入、参数校验、前后策略和结果通知。
+    // 只替换实际只读工具体；作用域自定义的同名工具不进入全局缓存。
+    const pipeline = new ToolExecutionPipeline(this.ctx, { get: (toolName, scope, toolSet) => {
+      const original = this.tools.executable(toolName, scope, toolSet)
+      if (!original || toolName !== name) return original
+      return { ...original, execute: async (parameters, inner) => {
+        const call = async (active: AbortSignal) => {
+          active.throwIfAborted()
+          const contexts: CachedQuery['contexts'] = []
+          let concludesTurn = false
+          cache?.recordCall(plan?.request.kind ?? 'route')
+          const response = await original.execute(parameters, { ...inner, signal: active,
+            deferContext: context => { contexts.push(context) }, concludeTurn() { concludesTurn = true } })
+          const at = new Date().toISOString()
+          plan?.validate(response, at)
+          return { response, fetchedAt: at, contexts, concludesTurn }
+        }
+        if (plan && cache && original === this.tools.get(name)) {
+          const partition = [this.objectId(inner.agent), this.objectId(inner.toolSet), this.objectId(original)].join(':')
+          loaded = await cache.obtain(plan.request, partition, inner.signal, plan.refresh, call)
+          fetchedAt = loaded.fetchedAt
+          for (const context of loaded.contexts) inner.deferContext(context)
+          if (loaded.concludesTurn) inner.concludeTurn()
+          return loaded.response
+        }
+        const direct = await call(inner.signal)
+        fetchedAt = direct.fetchedAt
+        for (const context of direct.contexts) inner.deferContext(context)
+        if (direct.concludesTurn) inner.concludeTurn()
+        return direct.response
+      } }
+    } })
     const callId = ToolCallId('trip-amap-' + randomUUID())
     // 这里是组合工具的内部调用，不重新当作一个模型根调用去选择 Native/PTC 呈现方式。
-    const prepared = await this.pipeline.prepare({ callId, name, arguments: args, signal,
+    const prepared = await pipeline.prepare({ callId, name, arguments: args, signal,
       ...execution.agent === undefined ? {} : { agent: execution.agent },
       ...execution.toolSet === undefined ? {} : { toolSet: execution.toolSet },
       ...execution.token === undefined ? {} : { parent: execution.token },
       ...execution.rootCallId === undefined ? {} : { rootCallId: execution.rootCallId },
     })
-    const outcome = prepared.kind === 'dispatch' ? await this.pipeline.dispatch(prepared.exec) : prepared
-    const result = await this.pipeline.complete(prepared.exec, outcome)
+    const outcome = prepared.kind === 'dispatch' ? await pipeline.dispatch(prepared.exec) : prepared
+    const result = await pipeline.complete(prepared.exec, outcome)
     for (const context of result.additionalContexts ?? []) execution.deferContext?.(context)
     signal.throwIfAborted()
     if (result.isError) {
@@ -163,6 +215,11 @@ export class AmapMcpAdapter {
       throw new HarnessError('高德查询调用失败：' + message, 'TRIP_UPSTREAM_ERROR')
     }
     if (result.concludesTurn) execution.concludeTurn?.()
-    return result.value
+    if (plan && loaded && !result.additionalContexts?.length && !result.concludesTurn) {
+      const places = plan.validate(result.value, fetchedAt)
+      await cache.store(plan.request, loaded, result.value, places, signal)
+    }
+    signal.throwIfAborted()
+    return { value: result.value, fetchedAt }
   }
 }

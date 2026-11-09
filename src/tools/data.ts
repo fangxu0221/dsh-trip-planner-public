@@ -39,6 +39,7 @@ export function apply(ctx: Context): void {
       keywords: { type: 'string', required: true, description: '地点名称或游玩关键词，例如广州塔、公园。' },
       city: { type: 'string', description: '限定搜索城市，例如广州。' },
       limit: { type: 'integer', description: '返回数量，不能超过插件 maxResults 配置。' },
+      refresh: { type: 'boolean', description: '用户明确要求重新查询时设为 true，跳过已有地点搜索缓存。' },
     },
     output: {
       schema: searchOutputSchema,

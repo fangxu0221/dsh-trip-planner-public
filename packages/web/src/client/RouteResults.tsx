@@ -108,13 +108,25 @@ export function RouteResults({ result, onClear, children }: {
             <strong className="trip-planner-duration">{route.durationSeconds === null ? '' : '预计 '}{formatDuration(route.durationSeconds)}</strong>
             <span className="trip-planner-chevron" aria-hidden="true" />
           </span>
-          <span className="trip-planner-mode-sequence">
-            {route.modes.map((mode, index) => <Fragment key={index}>
-              {index > 0 && <span aria-hidden="true">→</span>}<ModeBadge mode={mode} />
+          <span className="trip-planner-line-sequence" aria-label="乘坐线路">
+            {route.summary.map((leg, index) => <Fragment key={index}>
+              {index > 0 && <span className="trip-planner-line-arrow" aria-hidden="true">→</span>}
+              <span className="trip-planner-line-leg" role="group"
+                aria-label={leg.options.length > 1 ? '本段任选其一' : undefined}>
+                {leg.options.map((line, optionIndex) => <Fragment key={optionIndex}>
+                  {optionIndex > 0 && <span className="trip-planner-line-or" aria-hidden="true">/</span>}
+                  <span className="trip-planner-line-name" data-mode={line.mode}
+                    aria-label={line.label === modeLabels[line.mode] ? line.label : modeLabels[line.mode] + ' ' + line.label}>
+                    <TripGlyph name={line.mode} />{line.label}
+                  </span>
+                </Fragment>)}
+              </span>
             </Fragment>)}
+          </span>
+          {(result.mode === 'transit' || route.fastest) && <span className="trip-planner-summary-meta">
             {result.mode === 'transit' && <small className="trip-planner-transfer-count">{formatTransfers(route.transfers)}</small>}
             {route.fastest && <small className="trip-planner-fastest">用时最短</small>}
-          </span>
+          </span>}
         </summary>
         <div className="trip-planner-alternative-body">
           <button type="button" className="trip-planner-remove-option" aria-label={'移除方案 ' + route.index}

@@ -12,6 +12,11 @@ export interface Config {
   routeTimeoutMs: number
   /** 是否打印服务加载、卸载日志。 */
   showLifecycleLogs: boolean
+  /** 搜索和详情缓存可关闭；过期不会触发后台刷新。 */
+  cacheEnabled: boolean
+  searchCacheTtlSeconds: number
+  detailsCacheTtlSeconds: number
+  cacheMaxEntries: number
 }
 
 export const Config = Schema.object({
@@ -20,4 +25,8 @@ export const Config = Schema.object({
   queryTimeoutMs: Schema.number().step(1).min(1000).max(30000).default(20000),
   routeTimeoutMs: Schema.number().step(1).min(1000).max(120000).default(60000),
   showLifecycleLogs: Schema.boolean().default(true),
+  cacheEnabled: Schema.boolean().default(true),
+  searchCacheTtlSeconds: Schema.number().step(1).min(1).max(86400).default(1800),
+  detailsCacheTtlSeconds: Schema.number().step(1).min(1).max(2592000).default(604800),
+  cacheMaxEntries: Schema.number().step(1).min(1).max(1000).default(200),
 })

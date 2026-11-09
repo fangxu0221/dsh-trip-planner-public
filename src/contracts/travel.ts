@@ -5,6 +5,7 @@ export interface SearchPlacesQuery {
   keywords: string
   city?: string
   limit?: number
+  refresh?: boolean
 }
 
 /** 已完成校验、去除首尾空白并填好默认值的条件。 */

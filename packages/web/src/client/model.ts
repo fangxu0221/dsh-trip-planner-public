@@ -7,11 +7,12 @@ import type {
   PlacesSearchResult, PlanRouteQuery, PlanRouteResult, RenameSavedPlaceRequest, SavedPlacesView,
   SavedPlaceTarget, SavedPlaceWriteResult, SavePlaceRequest, SearchPlacesQuery,
   RenameSavedRouteRequest, SavedRoutesView, SavedRouteWriteResult, SaveRouteRequest, UpdateSavedRouteEndpointsRequest, ChatRouteView,
+  CachedPlacesQuery, CachedPlacesView, QueryCacheStats,
 } from '../types.ts'
 
 type QueryState<T> = { status: 'idle' | 'loading' } | { status: 'success'; value: T } | { status: 'error'; message: string }
 type QueryResult<T> = { ok: true; value: T } | { ok: false; error: { message: string } }
-interface TripResults { search: PlacesSearchResult; route: PlanRouteResult }
+interface TripResults { search: PlacesSearchResult; route: PlanRouteResult; cached: CachedPlacesView; cacheStats: QueryCacheStats }
 interface CollectionState<T> {
   status: 'connecting' | 'live' | 'reconnecting' | 'failed'
   view: T | null
@@ -221,11 +222,12 @@ export class TripClientModel {
 }
 
 export class TripQueries {
-  readonly state = createSnapshotStore<TripQueryState>({ search: { status: 'idle' }, route: { status: 'idle' } })
+  readonly state = createSnapshotStore<TripQueryState>({ search: { status: 'idle' }, route: { status: 'idle' }, cached: { status: 'idle' }, cacheStats: { status: 'idle' } })
   private readonly pending: Partial<Record<keyof TripResults, AbortController>> = {}
-  private readonly api: Pick<TripApi, 'searchPlaces' | 'planRoute'>
+  private readonly api: Pick<TripApi, 'searchPlaces' | 'planRoute' | 'listCachedPlaces' | 'touchCachedPlace' | 'cacheStats' | 'clearPlaceCache'>
+  private clearingCache = false
 
-  constructor(api: Pick<TripApi, 'searchPlaces' | 'planRoute'>) { this.api = api }
+  constructor(api: TripQueries['api']) { this.api = api }
 
   search(query: SearchPlacesQuery): Promise<void> {
     return this.run('search', signal => this.api.searchPlaces(query, signal))
@@ -235,7 +237,28 @@ export class TripQueries {
     return this.run('route', signal => this.api.planRoute(query, signal))
   }
 
-  reset(key: 'search' | 'route'): void {
+  cachedPlaces(query: CachedPlacesQuery): Promise<void> {
+    return this.run('cached', signal => this.api.listCachedPlaces(query, signal))
+  }
+
+  cacheStats(): Promise<void> {
+    return this.clearingCache ? Promise.resolve() : this.run('cacheStats', signal => this.api.cacheStats(signal))
+  }
+
+  async clearPlaceCache(): Promise<void> {
+    if (this.clearingCache) return
+    this.clearingCache = true
+    this.reset('cached')
+    try { await this.run('cacheStats', signal => this.api.clearPlaceCache(signal)) }
+    finally { this.clearingCache = false }
+  }
+
+  async touchCachedPlace(placeId: string): Promise<void> {
+    try { await this.api.touchCachedPlace({ placeId }, AbortSignal.timeout(5000)) }
+    catch { /* 最近选择排序是辅助信息，不阻塞用户选点。 */ }
+  }
+
+  reset(key: keyof TripResults): void {
     this.pending[key]?.abort()
     delete this.pending[key]
     if (this.state.getSnapshot()[key].status !== 'idle') this.update(key, { status: 'idle' })
