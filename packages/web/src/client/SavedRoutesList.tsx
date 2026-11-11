@@ -32,16 +32,18 @@ export function SavedRoutesList({ favorites, savedRoutes, routeWrite, ...actions
     {savedRoutes.status === 'failed' && <button type="button" onClick={() => void actions.onConnectSavedRoutes()}>重新连接常用路线</button>}
     {savedRoutes.view && routes.length === 0 && <p>暂无常用路线。查到路线后可以保存。</p>}
     <ul>{routes.map(route => {
-      const origin = savedRouteSelection(route.origin, favorites)
-      const destination = savedRouteSelection(route.destination, favorites)
-      const needsFavorites = route.origin.kind === 'saved' || route.destination.kind === 'saved'
+      const points = [route.origin, ...(route.waypoints ?? []), route.destination]
+      const selected = points.map(point => savedRouteSelection(point, favorites))
+      const needsFavorites = points.some(point => point.kind === 'saved')
       const canResolve = !needsFavorites || favorites.status === 'live'
-      const missing = canResolve && (!origin || !destination)
+      const missingLabels = selected.flatMap((point, index) => point ? []
+        : [index === 0 ? '起点' : index === points.length - 1 ? '终点' : '途经点 ' + index])
+      const missing = canResolve && missingLabels.length > 0
       return <li key={route.id} className="trip-planner-option-row trip-planner-saved-route">
         <div className="trip-planner-entry-title">
           <strong>{route.name} · {modes[route.mode]}</strong>
-          <small>{origin?.name ?? route.origin.label} → {destination?.name ?? route.destination.label}</small>
-          {missing && <small className="trip-planner-error">{!origin && !destination ? '起点和终点' : !origin ? '起点' : '终点'}需重选</small>}
+          <small>{points.map((point, index) => selected[index]?.name ?? point.label).join(' → ')}</small>
+          {missing && <small className="trip-planner-error">{missingLabels.join('、')}需重选</small>}
           {!canResolve && <small>等待地点收藏同步</small>}
         </div>
         <button type="button" disabled={savedRoutes.status !== 'live' || !canResolve}

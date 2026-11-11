@@ -139,7 +139,7 @@ export default class RoutePlanner extends RoutePlannerService {
       if (!pins && previous?.longitude === place.coordinates.longitude && previous.latitude === place.coordinates.latitude) {
         this.sameEndpoint(references.length, stops.length)
       }
-      stops.push(place)
+      stops.push(point.saved ? { ...place, savedPlaceId: point.saved.id } : place)
     }
     return stops
   }

@@ -1,10 +1,12 @@
 /** 多地点路线默认显示总计和各段摘要，用户可分别打开各段详情。 */
-import { useId, useState } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import type { PlanMultiStopRouteResult } from '../types.ts'
 import { distance, LineSequence, RouteSteps } from './RouteResults.tsx'
 import { formatDuration, routeAlternatives } from './route-view.ts'
 
-export function MultiStopRouteResults({ result, onClear }: { result: PlanMultiStopRouteResult; onClear: () => void }) {
+export function MultiStopRouteResults({ result, onClear, children }: {
+  result: PlanMultiStopRouteResult; onClear: () => void; children?: ReactNode
+}) {
   const id = useId()
   const [collapsed, setCollapsed] = useState(false)
   const names = result.stops.map(stop => stop.alias ?? stop.name)
@@ -48,6 +50,7 @@ export function MultiStopRouteResults({ result, onClear }: { result: PlanMultiSt
           </div>
         </details>
       })}
+      {children}
     </div>
   </section>
 }

@@ -38,7 +38,7 @@ export const Config = Schema.object({
   cacheMaxEntries: Schema.number().step(1).min(1).max(1000).default(200),
   requireTripToolsForAgent: Schema.boolean().default(true),
   agentQueryBudgetEnabled: Schema.boolean().default(true),
-  agentMaxSearchCallsPerTurn: Schema.number().step(1).min(1).max(20).default(2),
-  agentMaxDetailCallsPerTurn: Schema.number().step(1).min(1).max(20).default(2),
-  agentMaxRouteCallsPerTurn: Schema.number().step(1).min(1).max(20).default(4),
+  agentMaxSearchCallsPerTurn: Schema.number().step(1).min(1).max(20).default(3),
+  agentMaxDetailCallsPerTurn: Schema.number().step(1).min(1).max(20).default(6),
+  agentMaxRouteCallsPerTurn: Schema.number().step(1).min(1).max(20).default(6),
 })

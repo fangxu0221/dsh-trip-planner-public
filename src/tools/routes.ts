@@ -20,12 +20,18 @@ export const endpointInput = { oneOf: [
 ] } as const
 
 export const endpointOutput = { type: 'object', additionalProperties: false, properties: {
+  savedPlaceId: { type: 'string' },
   placeId: { type: 'string', required: true }, alias: nullableText, name: { type: 'string', required: true },
   address: nullableText, city: nullableText, detailsFetchedAt: { type: 'string', required: true },
   coordinates: { type: 'object', additionalProperties: false, required: true, properties: {
     longitude: { type: 'number', required: true }, latitude: { type: 'number', required: true },
   } },
 } } as const
+
+/** 续接只影响会话如何展示已经查到的路段。 */
+export const continuationInput = { type: 'string', enum: ['append', 'separate'],
+  description: '同一轮已经查到上一段、且用户明确要延续这条路线时用 append。用户单独要求另一条路线时用 separate。优先一次提交完整地点列表。',
+} as const
 
 /** 与 DTO 对齐的完整输出；未知数值明确为 null，供后续 UI 或比较功能直接使用。 */
 export const routeOutputSchema = { type: 'object', additionalProperties: false, properties: {
@@ -90,8 +96,9 @@ export function apply(ctx: Context): void {
     name: 'trip_plan_route',
     description: '规划已选定的两点之间一种交通方式的路线。交通方式不明确时必须先询问用户，等待回答后调用，不得默认驾车。当前连续对话中用户已明确的方式可沿用；仅在用户明确要求比较或授权选择时查询相应方式。起终点使用收藏别名或真实高德 POI ID，地点不明确时先搜索并让用户选择。支持步行、骑行、驾车、公共交通。按乘车顺序说明线路、方向、站数、下车站和出口，只采用工具返回的字段。',
     parameters: { origin: { ...endpointInput, required: true }, destination: { ...endpointInput, required: true },
+      continuation: continuationInput,
       mode: { type: 'string', enum: routeModes, required: true, description: '用户明确选择或授权的交通方式。未明确时先询问，不设默认值。walking 步行，bicycling 骑行，driving 驾车，transit 公共交通。' } },
     output: { schema: routeOutputSchema, render: (_args, value) => [{ type: 'text', text: renderRoute(value) }] },
-    execute: (args, execution) => ctx.routePlanner.plan(args, execution),
+    execute: ({ origin, destination, mode }, execution) => ctx.routePlanner.plan({ origin, destination, mode }, execution),
   }))
 }

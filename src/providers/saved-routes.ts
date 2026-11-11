@@ -44,10 +44,10 @@ class PersistentSavedRoutes extends SavedRoutesService {
   }
 
   override async save(input: SaveRouteInput, signal: AbortSignal): Promise<SavedRoute> {
-    const { name, mode, origin, destination } = parse(saveRouteSchema, input, '请填写有效路线名称、起终点和交通方式。')
+    const { name, mode, ...requested } = parse(saveRouteSchema, input, '请填写有效路线名称、地点和交通方式。')
     return this.mutate(signal, async () => {
       this.assertNameAvailable(name)
-      const endpoints = await this.resolveEndpoints({ origin, destination })
+      const endpoints = await this.resolveEndpoints(requested)
       signal.throwIfAborted()
       return this.store({ id: randomUUID(), name, mode, ...endpoints, updatedAt: new Date().toISOString() })
     })
@@ -64,10 +64,10 @@ class PersistentSavedRoutes extends SavedRoutesService {
   }
 
   override async updateEndpoints(id: string, input: SavedRouteEndpoints, signal: AbortSignal): Promise<SavedRoute> {
-    const endpoints = parse(savedRouteEndpointsSchema, input, '请选择有效的起点和终点。')
+    const endpoints = parse(savedRouteEndpointsSchema, input, '请选择有效的起点、途经点和终点。')
     return this.mutate(signal, async () => {
       const route = this.get(id)
-      const next = await this.resolveEndpoints(endpoints)
+      const next = await this.resolveEndpoints({ ...endpoints, waypoints: endpoints.waypoints ?? route.waypoints })
       signal.throwIfAborted()
       return this.store({ ...route, ...next, updatedAt: new Date().toISOString() })
     })
@@ -101,18 +101,22 @@ class PersistentSavedRoutes extends SavedRoutesService {
   }
 
   /** 收藏按本地 ID 解析，名称快照仅用于展示已失效的记录。 */
-  private async resolveEndpoints({ origin, destination }: SavedRouteEndpoints): Promise<SavedRouteEndpoints> {
-    const places = origin.kind === 'saved' || destination.kind === 'saved' ? await this.ctx.savedPlaces.list() : []
+  private async resolveEndpoints({ origin, waypoints, destination }: SavedRouteEndpoints): Promise<SavedRouteEndpoints> {
+    const endpoints = [origin, ...(waypoints ?? []), destination]
+    const places = endpoints.some(endpoint => endpoint.kind === 'saved') ? await this.ctx.savedPlaces.list() : []
     function resolve(endpoint: SavedRouteEndpoint) {
       if (endpoint.kind === 'poi') return { endpoint, placeId: endpoint.placeId }
       const place = places.find(place => place.id === endpoint.savedPlaceId)
       if (!place) throw new HarnessError('选中的收藏已取消，请重新选点。', 'TRIP_SAVED_ROUTE_ENDPOINT_MISSING')
       return { endpoint: { ...endpoint, label: place.alias + ' · ' + place.name }, placeId: place.placeId }
     }
-    const from = resolve(origin)
-    const to = resolve(destination)
-    if (from.placeId === to.placeId) throw new HarnessError('起点和终点不能是同一个地点。', 'TRIP_INVALID_SAVED_ROUTE')
-    return { origin: from.endpoint, destination: to.endpoint }
+    const resolved = endpoints.map(resolve)
+    if (resolved.some((stop, index) => stop.placeId === resolved[index - 1]?.placeId)) {
+      throw new HarnessError('相邻的两个地点不能相同。', 'TRIP_INVALID_SAVED_ROUTE')
+    }
+    return { origin: resolved[0].endpoint, destination: resolved.at(-1)!.endpoint,
+      ...(waypoints ? { waypoints: resolved.slice(1, -1).map(stop => stop.endpoint) } : {}),
+    }
   }
 
   private async store(route: SavedRoute): Promise<SavedRoute> {

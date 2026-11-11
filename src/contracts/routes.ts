@@ -31,6 +31,7 @@ export type PlanMultiStopRouteQuery = z.infer<typeof planMultiStopRouteQuerySche
 /** 已解析的端点，坐标必需；城市在非公交查询中允许未知。时间表示地点详情快照时间。 */
 export interface RouteEndpoint {
   placeId: string
+  savedPlaceId?: string
   alias: string | null
   name: string
   address: string | null

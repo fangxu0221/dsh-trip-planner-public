@@ -2,13 +2,46 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { randomUUID } from 'node:crypto'
 import type { ToolExecution, ToolExecutionToken } from '@deepseek-ai/dsh-tools'
-import type { ChatRouteItem, ChatRouteView, RouteResult } from './types.ts'
+import { maxMultiStopPlaces } from '../../../src/contracts/route-limits.ts'
+import type { ChatRouteItem, ChatRouteView, PlanMultiStopRouteResult, RouteResult } from './types.ts'
 
 type LiveSession = NonNullable<ToolExecution['agent']>['session']
-interface RequestOrder { order: number; turn: symbol }
+type MultiStopLeg = PlanMultiStopRouteResult['legs'][number]
+interface RequestOrder { order: number; turn: symbol; continuation?: 'append' | 'separate' }
 interface Candidate extends RequestOrder { result: RouteResult; signal: AbortSignal }
 interface RouteGroup { turn: symbol; order: number; stops: string[]; view: ChatRouteView }
 const empty: ChatRouteView = { revision: 0, groupId: '', results: [] }
+
+function routeStops(result: RouteResult) {
+  return 'stops' in result ? result.stops : [result.origin, result.destination]
+}
+
+function routeLegs(result: RouteResult, offset: number): MultiStopLeg[] {
+  if ('stops' in result) return result.legs.map(leg => ({ ...leg, from: leg.from + offset, to: leg.to + offset }))
+  const route = result.status === 'found' ? result.routes[0] ?? null : null
+  return [{
+    from: offset, to: offset + 1, status: route ? 'found' : 'no-route', route,
+    fetchedAt: result.fetchedAt, warnings: result.warnings, message: null,
+  }]
+}
+
+/** 拼接只使用已经查询的首选方案，未知的全程指标继续保留为空。 */
+function joinRoutes(before: RouteResult, after: RouteResult): PlanMultiStopRouteResult | undefined {
+  const prefix = routeStops(before)
+  const stops = [...prefix, ...routeStops(after).slice(1)]
+  const firstLegs = routeLegs(before, 0)
+  if (stops.length > maxMultiStopPlaces || firstLegs.some(leg => leg.status !== 'found')) return
+  const legs = [...firstLegs, ...routeLegs(after, prefix.length - 1)]
+  const complete = legs.every(leg => leg.status === 'found')
+  const total = (field: 'durationSeconds' | 'distanceMeters') => {
+    const values = legs.map(leg => leg.route?.[field])
+    return complete && values.every(value => value != null) ? values.reduce((sum, value) => sum + value, 0) : null
+  }
+  return {
+    source: 'AMAP', stops, mode: before.mode, order: 'given', legs, status: complete ? 'complete' : 'incomplete',
+    totalDurationSeconds: total('durationSeconds'), totalDistanceMeters: total('distanceMeters'),
+  }
+}
 
 export class SessionRoutes {
   private readonly latest = new Map<LiveSession, RouteGroup>()
@@ -33,9 +66,13 @@ export class SessionRoutes {
     }, { global: true })
     ctx.on('tools/pre-execute', (execution, next) => {
       if ((execution.name === 'trip_plan_route' || execution.name === 'trip_plan_multi_stop_route') && execution.agent) {
+        const args = execution.arguments
+        const continuation = args && typeof args === 'object' && 'continuation' in args ? args.continuation : undefined
         this.pending.set(execution.token, { order: ++this.order,
           // 步骤外的程序调用独立成组，避免把没有轮次依据的查询合并。
-          turn: this.turns.get(execution.agent.session)?.key ?? Symbol() })
+          turn: this.turns.get(execution.agent.session)?.key ?? Symbol(),
+          continuation: continuation === 'append' || continuation === 'separate' ? continuation : undefined,
+        })
       }
       return next()
     }, { global: true })
@@ -88,8 +125,26 @@ export class SessionRoutes {
   /** 异方式允许晚到补齐，同方式只接受较新请求；旧组不能覆盖新组。 */
   private commit(session: LiveSession, candidate: Candidate): boolean {
     const current = this.latest.get(session)
-    const { result, order, turn } = candidate
-    const stops = ('stops' in result ? result.stops : [result.origin, result.destination]).map(stop => stop.placeId)
+    const { order, turn, continuation } = candidate
+    let result = candidate.result
+    const previous = current?.turn === turn && current.view.results.find(item => item.result.mode === result.mode)
+    if (previous && previous.revision < order && continuation !== 'separate') {
+      const prefix = routeStops(previous.result)
+      const suffix = routeStops(result)
+      const first = prefix[0].placeId
+      const last = prefix.at(-1)!.placeId
+      const closesLoop = suffix.length === 2 && suffix[1].placeId === first
+      // 完整闭环的末段若又被单独查询，保留整条结果。
+      if (closesLoop && first === last && suffix[0].placeId === prefix.at(-2)?.placeId
+        && 'stops' in previous.result && previous.result.status === 'complete') return false
+      const connects = suffix[0].placeId === last
+      if (continuation === 'append' || (connects && closesLoop && first !== last)) {
+        const joined = connects && joinRoutes(previous.result, result)
+        if (!joined) return false
+        result = joined
+      }
+    }
+    const stops = routeStops(result).map(stop => stop.placeId)
     const sameGroup = current?.turn === turn && current.stops.length === stops.length
       && current.stops.every((stop, index) => stop === stops[index])
     let results: ChatRouteItem[]

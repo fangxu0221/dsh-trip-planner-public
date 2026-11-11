@@ -5,7 +5,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import { maxMultiStopPlaces } from '../../../../src/contracts/route-limits.ts'
 import type {
-  RenameSavedRouteRequest, RouteMode, RouteOrder, RouteResult, SavedPlaceOption, SavedRouteEndpoint, SavedRouteOption,
+  RenameSavedRouteRequest, RouteEndpoint, RouteMode, RouteOrder, RouteResult, SavedPlaceOption, SavedRouteEndpoint, SavedRouteEndpoints, SavedRouteOption,
   SaveRouteRequest, UpdateSavedRouteEndpointsRequest,
 } from '../types.ts'
 import { type TripClientState, type TripQueries } from './model.ts'
@@ -91,6 +91,19 @@ function routeEndpoint(selection: Selection | undefined): SavedRouteEndpoint | u
   if (reference.expectedId) return { kind: 'saved', savedPlaceId: reference.expectedId, label }
 }
 
+function savedRouteEndpoints(points: SavedRouteEndpoint[]): SavedRouteEndpoints {
+  return {
+    origin: points[0], destination: points.at(-1)!,
+    ...(points.length > 2 ? { waypoints: points.slice(1, -1) } : {}),
+  }
+}
+
+function saveResultPoint(point: RouteEndpoint): SavedRouteEndpoint {
+  return point.savedPlaceId
+    ? { kind: 'saved', savedPlaceId: point.savedPlaceId, label: point.name }
+    : { kind: 'poi', placeId: point.placeId, label: point.name }
+}
+
 export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...actions }: Props) {
   const { tab } = useTabInfo()
   const shortcutsId = useId()
@@ -100,7 +113,7 @@ export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...ac
   const [picker, setPicker] = useState<Endpoint | 'add-favorite' | number | null>(null)
   const [expanded, setExpanded] = useState<'favorites' | 'routes' | null>(null)
   const [repairId, setRepairId] = useState<string | null>(null)
-  const [showSave, setShowSave] = useState(false)
+  const [saveResult, setSaveResult] = useState<RouteResult>()
   const [endpoints, setEndpoints] = useState<Partial<Record<Endpoint, Selection>>>({})
   const [waypoints, setWaypoints] = useState<Waypoint[]>([])
   const nextWaypointId = useRef(0)
@@ -116,6 +129,7 @@ export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...ac
     ? conversation?.results.find(item => item.result.mode === chatSelection.mode)?.result : undefined)
     ?? conversation?.results[0]?.result
   const showChat = !!activeChat && resultSource === 'chat'
+  const editingSave = !!saveResult && saveResult === (showChat ? activeChat : route.status === 'success' ? route.value : undefined)
   const places = favorites.view?.places ?? []
   const origin = currentSelection(endpoints.origin, places)
   const destination = currentSelection(endpoints.destination, places)
@@ -139,8 +153,8 @@ export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...ac
     if (!chatVersion || seenChatVersion.current === chatVersion) return
     seenChatVersion.current = chatVersion
     // 收到对话结果时保留表单、正在编辑的草稿和手动查询的视图。
-    if (route.status !== 'loading' && !picker && !repairId && !showSave && !expanded) setResultSource('chat')
-  }, [chatVersion, route.status, picker, repairId, showSave, expanded])
+    if (route.status !== 'loading' && !picker && !repairId && !editingSave && !expanded) setResultSource('chat')
+  }, [chatVersion, route.status, picker, repairId, editingSave, expanded])
 
   useEffect(() => {
     if (!missingEndpoint) return
@@ -150,7 +164,7 @@ export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...ac
     }))
     if (missingWaypoint) setWaypoints(current => current.map(point => ({ ...point, selection: currentSelection(point.selection, places) })))
     setEndpointNotice('已选收藏已被取消，请重新选择地点。')
-    setShowSave(false)
+    setSaveResult(undefined)
     queries.reset('route')
   }, [missingEndpoint, missingOrigin, missingDestination, missingWaypoint, places, queries])
 
@@ -186,7 +200,7 @@ export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...ac
       setEndpoints(current => ({ ...current, [picker]: selection }))
     }
     setEndpointNotice('')
-    setShowSave(false)
+    setSaveResult(undefined)
     queries.reset('route')
     closePicker()
   }
@@ -194,7 +208,7 @@ export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...ac
   function editWaypoints(update: (current: Waypoint[]) => Waypoint[]) {
     setWaypoints(update)
     setEndpointNotice('')
-    setShowSave(false)
+    setSaveResult(undefined)
     queries.reset('route')
   }
 
@@ -221,7 +235,7 @@ export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...ac
     event.preventDefault()
     if (!repairId && canPlan && origin && destination && mode) {
       setResultSource('manual')
-      setShowSave(false)
+      setSaveResult(undefined)
       if (waypoints.length) {
         const references = stops.map(stop => stop.reference)
         void queries.planMultiStop(order === 'optimized' ? { stops: references, mode, order, pinStart: true, pinEnd: true }
@@ -234,38 +248,54 @@ export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...ac
     queries.reset('route')
     actions.onDismissChatRoute(sessionId)
     setResultSource('manual')
-    setShowSave(false)
+    setSaveResult(undefined)
   }
 
   function openRoute(savedRoute: SavedRouteOption, needsRepair: boolean) {
     const origin = savedRouteSelection(savedRoute.origin, favorites)
     const destination = savedRouteSelection(savedRoute.destination, favorites)
+    const via = (savedRoute.waypoints ?? []).map(point => savedRouteSelection(point, favorites))
+    const selections = [origin, ...via, destination].filter((selection): selection is Selection => !!selection)
     setEndpoints({ origin, destination })
-    setWaypoints([])
+    setWaypoints(via.map(selection => ({ id: ++nextWaypointId.current, selection })))
     setOrder('given')
     setMode(savedRoute.mode)
-    setShowSave(false)
+    setSaveResult(undefined)
     setResultSource('manual')
     setExpanded(null)
-    if (needsRepair || !origin || !destination) {
+    if (needsRepair || !origin || !destination || selections.length !== via.length + 2) {
       queries.reset('route')
       setRepairId(savedRoute.id)
-      setEndpointNotice('请选择缺失的端点，再更新这条路线。')
+      setEndpointNotice('请选择缺失的地点，再更新这条路线。')
       return
     }
     setRepairId(null)
     setEndpointNotice('')
-    void queries.plan({ origin: origin.reference, destination: destination.reference, mode: savedRoute.mode })
+    if (via.length) void queries.planMultiStop({ stops: selections.map(selection => selection.reference), mode: savedRoute.mode })
+    else void queries.plan({ origin: origin.reference, destination: destination.reference, mode: savedRoute.mode })
   }
 
   async function updateRoute() {
-    const start = routeEndpoint(origin)
-    const end = routeEndpoint(destination)
-    if (!repair || !canPlan || !canEditRoutes || !start || !end) return
-    if (await actions.onUpdateSavedRouteEndpoints({ id: repair.id, endpoints: { origin: start, destination: end } })) {
+    if (!repair || !canPlan || !canEditRoutes) return
+    const points = stops.map(routeEndpoint)
+    if (!points.every(point => point !== undefined)) return
+    if (await actions.onUpdateSavedRouteEndpoints({ id: repair.id, endpoints: savedRouteEndpoints(points) })) {
       setRepairId(current => current === repair.id ? null : current)
       setExpanded('routes')
     }
+  }
+
+  function saveControls(result: RouteResult) {
+    if (result.status !== 'complete' && result.status !== 'found') return null
+    const points = ('stops' in result ? result.stops : [result.origin, result.destination]).map(saveResultPoint)
+    const canSave = canEditRoutes && (!points.some(point => point.kind === 'saved') || favorites.status === 'live')
+    return <div className="trip-planner-card trip-planner-save-route">
+      {saveResult === result ? <RouteNameForm title="保存为常用路线" canSubmit={canSave}
+        pending={routeWrite.status === 'pending'} onSave={name =>
+          actions.onSaveSavedRoute({ name, mode: result.mode, ...savedRouteEndpoints(points) })}
+        onClose={() => setSaveResult(current => current === result ? undefined : current)} />
+        : <button type="button" disabled={!canSave} onClick={() => setSaveResult(result)}>保存为常用路线</button>}
+    </div>
   }
 
   return <section className="trip-planner-panel" aria-label="出行规划面板">
@@ -277,19 +307,19 @@ export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...ac
       {activeChat && <div className="trip-planner-route-source">
         {showChat ? <>
           <strong><TripGlyph name="routes" />来自对话</strong>
-          <button type="button" onClick={() => setResultSource('manual')}>返回手动规划</button>
-        </> : <button type="button" onClick={() => setResultSource('chat')}>查看对话路线</button>}
+          <button type="button" onClick={() => { setSaveResult(undefined); setResultSource('manual') }}>返回手动规划</button>
+        </> : <button type="button" onClick={() => { setSaveResult(undefined); setResultSource('chat') }}>查看对话路线</button>}
       </div>}
       {showChat && activeChat ? <ChatRouteStops result={activeChat} /> : <section className="trip-planner-controls" aria-label="路线设置">
         <div className="trip-planner-endpoints" role="group" aria-label="起点、途经点和终点">
           <StopButton endpoint="origin" label="起点" selection={origin} onClick={() => setPicker('origin')} />
           {waypoints.map(({ id }, index) => <div className="trip-planner-waypoint" key={id}>
             <StopButton endpoint="waypoint" index={index + 1} label={'途经点 ' + (index + 1)} selection={via[index]} onClick={() => setPicker(id)} />
-            <div className="trip-planner-waypoint-actions">
+            {!repairId && <div className="trip-planner-waypoint-actions">
               <button type="button" aria-label={'上移途经点 ' + (index + 1)} title="上移" disabled={index === 0} onClick={() => moveWaypoint(index, -1)}>↑</button>
               <button type="button" aria-label={'下移途经点 ' + (index + 1)} title="下移" disabled={index === waypoints.length - 1} onClick={() => moveWaypoint(index, 1)}>↓</button>
               <button type="button" aria-label={'删除途经点 ' + (index + 1)} title="删除" onClick={() => editWaypoints(current => current.filter(point => point.id !== id))}>×</button>
-            </div>
+            </div>}
           </div>)}
           {!repairId && waypoints.length < maxMultiStopPlaces - 2 &&
             <button type="button" className="trip-planner-add-waypoint" aria-haspopup="dialog" onClick={addWaypoint}>＋ 添加途经点</button>}
@@ -302,17 +332,18 @@ export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...ac
               {(Object.keys(modes) as RouteMode[]).map(value => <label key={value}>
                   <input type="radio" name={shortcutsId + '-mode'} value={value} checked={mode === value} onChange={() => {
                     setMode(value)
-                    setShowSave(false)
+                    setSaveResult(undefined)
                     queries.reset('route')
                   }} />
                   <span className="trip-planner-mode" data-mode={value}><TripGlyph name={value} />{modes[value]}</span>
                 </label>)}
             </div>
           </fieldset>
-          {!!waypoints.length && <label className="trip-planner-route-order">
+          {!!waypoints.length && !repairId && <label className="trip-planner-route-order">
             <span>地点顺序</span>
             <select value={order} onChange={event => {
               setOrder(event.currentTarget.value === 'optimized' ? 'optimized' : 'given')
+              setSaveResult(undefined)
               queries.reset('route')
             }}>
               <option value="given">按当前顺序</option>
@@ -344,21 +375,18 @@ export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...ac
       {expanded !== 'routes' && <RouteWriteFeedback routeWrite={routeWrite} />}
       {conversation && activeChat && <div hidden={!showChat}>
         <ChatRouteResults key={'chat-' + chatVersion} view={conversation} active={activeChat.mode}
-          onSelect={mode => setChatSelection({ groupId: chatVersion, mode })} onClear={clearRoute} />
+          onSelect={mode => {
+            if (mode !== activeChat.mode) setSaveResult(undefined)
+            setChatSelection({ groupId: chatVersion, mode })
+          }} onClear={clearRoute}>
+          {'stops' in activeChat && saveControls(activeChat)}
+        </ChatRouteResults>
       </div>}
       {!missingEndpoint && route.status === 'success' && <div hidden={showChat}>
-        {'stops' in route.value ? <MultiStopRouteResults result={route.value} onClear={clearRoute} />
+        {'stops' in route.value ? <MultiStopRouteResults result={route.value} onClear={clearRoute}>{saveControls(route.value)}</MultiStopRouteResults>
           : <RouteResults key={route.value.fetchedAt} result={route.value} onClear={clearRoute}>
-          {route.value.status === 'found' && <div className="trip-planner-card trip-planner-save-route">
-            {showSave ? <RouteNameForm title="保存为常用路线" canSubmit={canPlan && canEditRoutes}
-              pending={routeWrite.status === 'pending'} onSave={name => {
-                const start = routeEndpoint(origin)
-                const end = routeEndpoint(destination)
-                return start && end && mode ? actions.onSaveSavedRoute({ name, origin: start, destination: end, mode }) : Promise.resolve(false)
-              }} onClose={() => setShowSave(false)} />
-              : <button type="button" disabled={!canPlan || !canEditRoutes} onClick={() => setShowSave(true)}>保存为常用路线</button>}
-          </div>}
-        </RouteResults>}
+            {saveControls(route.value)}
+          </RouteResults>}
       </div>}
     </div>
     <footer className="trip-planner-dock">

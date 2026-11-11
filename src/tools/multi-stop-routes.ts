@@ -4,7 +4,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { maxMultiStopPlaces } from '../contracts/route-limits.ts'
 import { routeModes, routeOrders, type PlanMultiStopRouteResult } from '../contracts/routes.ts'
 import { formatTransitOption } from '../presentation/transit.ts'
-import { duration, endpointInput, endpointOutput, routeOutputSchema } from './routes.ts'
+import { continuationInput, duration, endpointInput, endpointOutput, routeOutputSchema } from './routes.ts'
 
 export const name = 'trip-multi-stop-route-tools'
 export const inject = ['tools', 'routePlanner']
@@ -57,8 +57,9 @@ export function apply(ctx: Context): void {
       order: { type: 'string', enum: routeOrders, description: 'given 沿用输入顺序，省略时兼容旧调用。用户未指定完整顺序时用 optimized，并明确传入 pinStart 和 pinEnd。' },
       pinStart: { type: 'boolean', description: '仅 optimized 使用。true 固定 stops 第一项为起点，false 由排序选择起点。' },
       pinEnd: { type: 'boolean', description: '仅 optimized 使用。true 固定 stops 最后一项为终点，false 由排序选择终点。' },
+      continuation: continuationInput,
     },
     output: { schema: outputSchema, render: (_args, value) => [{ type: 'text', text: render(value) }] },
-    execute: (args, execution) => ctx.routePlanner.planMultiStop(args, execution),
+    execute: ({ continuation: _continuation, ...query }, execution) => ctx.routePlanner.planMultiStop(query, execution),
   }))
 }

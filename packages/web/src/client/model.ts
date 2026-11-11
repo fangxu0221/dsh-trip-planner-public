@@ -170,7 +170,7 @@ export class TripClientModel {
 
   updateSavedRouteEndpoints(request: UpdateSavedRouteEndpointsRequest): Promise<boolean> {
     return this.write<SavedRouteWriteResult>('savedRoutes', signal => this.api.updateSavedRouteEndpoints(request, signal),
-      result => '已更新「' + result.name + '」的起终点。')
+      result => '已更新「' + result.name + '」的路线地点。')
   }
 
   removeSavedRoute(id: string): Promise<boolean> {

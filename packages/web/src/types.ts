@@ -54,8 +54,9 @@ export type RouteMode = 'walking' | 'bicycling' | 'driving' | 'transit'
 export type EndpointReference = { kind: 'saved'; alias: string; expectedId?: string } | { kind: 'poi'; placeId: string }
 export interface PlanRouteQuery { origin: EndpointReference; destination: EndpointReference; mode: RouteMode }
 
-interface RouteEndpoint {
+export interface RouteEndpoint {
   placeId: string
+  savedPlaceId?: string
   alias: string | null
   name: string
   address: string | null
@@ -151,7 +152,7 @@ export interface ChatRouteView {
 
 export type SavedRouteEndpoint = { kind: 'saved'; savedPlaceId: string; label: string }
   | { kind: 'poi'; placeId: string; label: string }
-export interface SavedRouteEndpoints { origin: SavedRouteEndpoint; destination: SavedRouteEndpoint }
+export interface SavedRouteEndpoints { origin: SavedRouteEndpoint; waypoints?: SavedRouteEndpoint[]; destination: SavedRouteEndpoint }
 export interface SaveRouteRequest extends SavedRouteEndpoints { name: string; mode: RouteMode }
 export interface SavedRouteOption extends SaveRouteRequest { id: string; updatedAt: string }
 export interface SavedRoutesView { revision: number; routes: SavedRouteOption[] }
