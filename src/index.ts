@@ -8,6 +8,7 @@ import * as savedRoutes from './providers/saved-routes.ts'
 import * as savedPlaceTools from './tools/saved-places.ts'
 import RoutePlanner from './providers/route-planner.ts'
 import * as routeTools from './tools/routes.ts'
+import * as multiStopRouteTools from './tools/multi-stop-routes.ts'
 import * as routePolicy from './prompts/route-policy.ts'
 import * as queryCache from './providers/query-cache.ts'
 import * as placePolicy from './prompts/place-policy.ts'
@@ -32,4 +33,5 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   await ctx.plugin(savedPlaceTools)
   await ctx.plugin(RoutePlanner, config)
   await ctx.plugin(routeTools)
+  await ctx.plugin(multiStopRouteTools)
 }

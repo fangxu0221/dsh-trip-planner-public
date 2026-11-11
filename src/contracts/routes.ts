@@ -1,5 +1,6 @@
 /** 路线数据约定：输入引用具体地点，输出统一单位，并保留公共交通的分段和可选线路。 */
 import { z } from 'zod'
+import { maxMultiStopPlaces } from './route-limits.ts'
 import type { Coordinates } from './travel.ts'
 
 export const routeModes = ['walking', 'bicycling', 'driving', 'transit'] as const
@@ -15,6 +16,17 @@ export const planRouteQuerySchema = z.object({
 }).strict()
 export type EndpointReference = z.infer<typeof endpointReferenceSchema>
 export type PlanRouteQuery = z.infer<typeof planRouteQuerySchema>
+
+export const routeOrders = ['given', 'optimized'] as const
+export type RouteOrder = typeof routeOrders[number]
+
+export const planMultiStopRouteQuerySchema = z.object({
+  stops: z.array(endpointReferenceSchema).min(3).max(maxMultiStopPlaces), mode: z.enum(routeModes),
+  order: z.enum(routeOrders).optional(), pinStart: z.boolean().optional(), pinEnd: z.boolean().optional(),
+}).strict().refine(query => query.order === 'optimized'
+  ? query.pinStart !== undefined && query.pinEnd !== undefined
+  : query.pinStart === undefined && query.pinEnd === undefined)
+export type PlanMultiStopRouteQuery = z.infer<typeof planMultiStopRouteQuerySchema>
 
 /** 已解析的端点，坐标必需；城市在非公交查询中允许未知。时间表示地点详情快照时间。 */
 export interface RouteEndpoint {
@@ -75,3 +87,25 @@ export interface RouteDataResult {
   warnings: string[]
 }
 export interface PlanRouteResult extends RouteDataResult, ResolvedRouteQuery {}
+
+/** 下标从零开始，引用 stops 中相邻的两个地点。 */
+export interface MultiStopLeg {
+  from: number
+  to: number
+  status: 'found' | 'no-route' | 'query-failed' | 'not-queried'
+  route: RouteAlternative | null
+  fetchedAt: string | null
+  warnings: string[]
+  message: string | null
+}
+
+export interface PlanMultiStopRouteResult {
+  source: 'AMAP'
+  stops: RouteEndpoint[]
+  mode: RouteMode
+  order: RouteOrder
+  status: 'complete' | 'incomplete'
+  legs: MultiStopLeg[]
+  totalDurationSeconds: number | null
+  totalDistanceMeters: number | null
+}

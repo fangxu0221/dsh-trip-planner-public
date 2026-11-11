@@ -18,3 +18,12 @@ export function transitCue(segment: RouteSegment, option: TransitOption) {
     exit,
   }
 }
+
+/** 把现有字段转成一句乘车指引，缺失字段留空。 */
+export function formatTransitOption(segment: RouteSegment, option: TransitOption): string {
+  const cue = transitCue(segment, option)
+  return cue.boarding + '乘坐 ' + cue.line + (cue.direction ? '（' + cue.direction + '）' : '')
+    + (cue.stopCount === undefined ? '' : '，乘坐 ' + cue.stopCount + ' 站')
+    + (cue.arrival ? '，到' + cue.arrival + '下车' : '')
+    + (cue.exit ? '，从' + cue.exit + '出站' : '')
+}

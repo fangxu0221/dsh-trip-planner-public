@@ -3,23 +3,23 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { routeModes, type PlanRouteResult, type RouteEndpoint, type RouteSegment } from '../contracts/routes.ts'
 import type {} from '../services/route-planner.ts'
-import { transitCue } from '../presentation/transit.ts'
+import { formatTransitOption } from '../presentation/transit.ts'
 
 export const name = 'trip-route-tools'
 export const inject = ['tools', 'routePlanner']
 
 const nullableText = { oneOf: [{ type: 'string' }, { type: 'null' }], required: true } as const
 const nullableNumber = { oneOf: [{ type: 'number' }, { type: 'null' }], required: true } as const
-const endpointInput = { oneOf: [
+export const endpointInput = { oneOf: [
   { type: 'object', additionalProperties: false, properties: {
     kind: { type: 'string', const: 'saved', required: true }, alias: { type: 'string', required: true },
   } },
   { type: 'object', additionalProperties: false, properties: {
     kind: { type: 'string', const: 'poi', required: true }, placeId: { type: 'string', required: true },
   } },
-], required: true } as const
+] } as const
 
-const endpointOutput = { type: 'object', additionalProperties: false, required: true, properties: {
+export const endpointOutput = { type: 'object', additionalProperties: false, properties: {
   placeId: { type: 'string', required: true }, alias: nullableText, name: { type: 'string', required: true },
   address: nullableText, city: nullableText, detailsFetchedAt: { type: 'string', required: true },
   coordinates: { type: 'object', additionalProperties: false, required: true, properties: {
@@ -29,7 +29,8 @@ const endpointOutput = { type: 'object', additionalProperties: false, required: 
 
 /** 与 DTO 对齐的完整输出；未知数值明确为 null，供后续 UI 或比较功能直接使用。 */
 export const routeOutputSchema = { type: 'object', additionalProperties: false, properties: {
-  origin: endpointOutput, destination: endpointOutput, mode: { type: 'string', enum: routeModes, required: true },
+  origin: { ...endpointOutput, required: true }, destination: { ...endpointOutput, required: true },
+  mode: { type: 'string', enum: routeModes, required: true },
   source: { type: 'string', const: 'AMAP', required: true }, fetchedAt: { type: 'string', required: true },
   status: { type: 'string', enum: ['found', 'no-route'], required: true },
   sourceCount: { type: 'integer', required: true }, returned: { type: 'integer', required: true }, truncated: { type: 'boolean', required: true },
@@ -54,19 +55,14 @@ export const routeOutputSchema = { type: 'object', additionalProperties: false, 
 
 const labels = { walking: '步行', bicycling: '骑行', driving: '驾车', transit: '公共交通' } as const
 function distance(value: number | null): string { return value === null ? '距离未知' : value < 1000 ? value + ' 米' : (value / 1000).toFixed(2) + ' 公里' }
-function duration(value: number | null): string { return value === null ? '耗时未知' : '预计 ' + Math.ceil(value / 60) + ' 分钟' }
+export function duration(value: number | null): string { return value === null ? '耗时未知' : '预计 ' + Math.ceil(value / 60) + ' 分钟' }
 function endpoint(value: RouteEndpoint): string {
   return (value.alias ? '“' + value.alias + '” ' : '') + value.name + '｜地区：' + (value.city ?? '来源未提供')
     + '｜经度：' + value.coordinates.longitude + '，纬度：' + value.coordinates.latitude + '｜地点详情时间：' + value.detailsFetchedAt
 }
 function segment(value: RouteSegment): string {
   if (value.transportOptions.length) {
-    const options = value.transportOptions.map(option => {
-      const cue = transitCue(value, option)
-      return cue.boarding + '乘坐 ' + cue.line + (cue.direction ? '（' + cue.direction + '）' : '')
-        + (cue.arrival ? '，' + cue.stops + '到' + cue.arrival + '下车' : '')
-        + (cue.exit ? '，从' + cue.exit + '出站' : '')
-    })
+    const options = value.transportOptions.map(option => formatTransitOption(value, option))
     return (options.length > 1 ? '本段任选其一：' : '') + options.join(' 或 ')
   }
   const kind = value.kind === 'public-transport' ? '公共交通' : value.kind === 'railway' ? '铁路' : value.kind === 'unknown' ? '其他路段' : labels[value.kind]
@@ -93,7 +89,7 @@ export function apply(ctx: Context): void {
   ctx.tools.register(defineTool({
     name: 'trip_plan_route',
     description: '规划已选定的两点之间一种交通方式的路线。交通方式不明确时必须先询问用户，等待回答后调用，不得默认驾车。当前连续对话中用户已明确的方式可沿用；仅在用户明确要求比较或授权选择时查询相应方式。起终点使用收藏别名或真实高德 POI ID，地点不明确时先搜索并让用户选择。支持步行、骑行、驾车、公共交通。按乘车顺序说明线路、方向、站数、下车站和出口，只采用工具返回的字段。',
-    parameters: { origin: endpointInput, destination: endpointInput,
+    parameters: { origin: { ...endpointInput, required: true }, destination: { ...endpointInput, required: true },
       mode: { type: 'string', enum: routeModes, required: true, description: '用户明确选择或授权的交通方式。未明确时先询问，不设默认值。walking 步行，bicycling 骑行，driving 驾车，transit 公共交通。' } },
     output: { schema: routeOutputSchema, render: (_args, value) => [{ type: 'text', text: renderRoute(value) }] },
     execute: (args, execution) => ctx.routePlanner.plan(args, execution),

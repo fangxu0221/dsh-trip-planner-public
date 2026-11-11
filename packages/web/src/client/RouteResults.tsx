@@ -3,9 +3,9 @@ import { Fragment, useId, useState, type ReactNode } from 'react'
 import type { PlanRouteResult, RouteSegment } from '../types.ts'
 import { transitCue } from '../../../../src/presentation/transit.ts'
 import { TripGlyph } from './TripGlyph.tsx'
-import { formatDuration, formatTransfers, modeLabels, routeAlternatives, transitMode, type DisplayMode, type DisplayStep } from './route-view.ts'
+import { formatDuration, formatTransfers, modeLabels, routeAlternatives, transitMode, type DisplayMode, type DisplayStep, type SummaryLeg } from './route-view.ts'
 
-function distance(meters: number): string {
+export function distance(meters: number): string {
   return meters < 1000 ? `${meters} 米` : `${Number((meters / 1000).toFixed(2))} 公里`
 }
 
@@ -80,6 +80,29 @@ function StepDetails({ segment, mode, transferAt }: DisplayStep) {
   </>
 }
 
+/** 两点方案和多地点分段使用同样的线路与步骤展示。 */
+export function LineSequence({ summary }: { summary: SummaryLeg[] }) {
+  return <span className="trip-planner-line-sequence" aria-label="乘坐线路">
+    {summary.map((leg, index) => <Fragment key={index}>
+      {index > 0 && <span className="trip-planner-line-arrow" aria-hidden="true">→</span>}
+      <span className="trip-planner-line-leg" role="group" aria-label={leg.options.length > 1 ? '本段任选其一' : undefined}>
+        {leg.options.map((line, optionIndex) => <Fragment key={optionIndex}>
+          {optionIndex > 0 && <span className="trip-planner-line-or" aria-hidden="true">/</span>}
+          <span className="trip-planner-line-name" data-mode={line.mode}
+            aria-label={line.label === modeLabels[line.mode] ? line.label : modeLabels[line.mode] + ' ' + line.label}>
+            <TripGlyph name={line.mode} />{line.label}
+          </span>
+        </Fragment>)}
+      </span>
+    </Fragment>)}
+  </span>
+}
+
+export function RouteSteps({ steps }: { steps: DisplayStep[] }) {
+  return steps.length === 0 ? <p className="trip-planner-muted">来源未提供分段指引。</p>
+    : <ol className="trip-planner-steps">{steps.map((step, index) => <li key={index}><StepDetails {...step} /></li>)}</ol>
+}
+
 export function RouteResults({ result, onClear, children }: {
   result: PlanRouteResult; onClear: () => void; children?: ReactNode
 }) {
@@ -108,21 +131,7 @@ export function RouteResults({ result, onClear, children }: {
             <strong className="trip-planner-duration">{route.durationSeconds === null ? '' : '预计 '}{formatDuration(route.durationSeconds)}</strong>
             <span className="trip-planner-chevron" aria-hidden="true" />
           </span>
-          <span className="trip-planner-line-sequence" aria-label="乘坐线路">
-            {route.summary.map((leg, index) => <Fragment key={index}>
-              {index > 0 && <span className="trip-planner-line-arrow" aria-hidden="true">→</span>}
-              <span className="trip-planner-line-leg" role="group"
-                aria-label={leg.options.length > 1 ? '本段任选其一' : undefined}>
-                {leg.options.map((line, optionIndex) => <Fragment key={optionIndex}>
-                  {optionIndex > 0 && <span className="trip-planner-line-or" aria-hidden="true">/</span>}
-                  <span className="trip-planner-line-name" data-mode={line.mode}
-                    aria-label={line.label === modeLabels[line.mode] ? line.label : modeLabels[line.mode] + ' ' + line.label}>
-                    <TripGlyph name={line.mode} />{line.label}
-                  </span>
-                </Fragment>)}
-              </span>
-            </Fragment>)}
-          </span>
+          <LineSequence summary={route.summary} />
           {(result.mode === 'transit' || route.fastest) && <span className="trip-planner-summary-meta">
             {result.mode === 'transit' && <small className="trip-planner-transfer-count">{formatTransfers(route.transfers)}</small>}
             {route.fastest && <small className="trip-planner-fastest">用时最短</small>}
@@ -132,8 +141,7 @@ export function RouteResults({ result, onClear, children }: {
           <button type="button" className="trip-planner-remove-option" aria-label={'移除方案 ' + route.index}
             onClick={() => setRemoved(current => [...current, route.index])}>移除此方案</button>
           {route.distanceMeters !== null && <p className="trip-planner-muted">全程 {distance(route.distanceMeters)}</p>}
-          {route.steps.length === 0 ? <p className="trip-planner-muted">来源未提供分段指引。</p> :
-            <ol className="trip-planner-steps">{route.steps.map((step, index) => <li key={index}><StepDetails {...step} /></li>)}</ol>}
+          <RouteSteps steps={route.steps} />
         </div>
       </details>)}
       {!!result.warnings.length && <details className="trip-planner-raw-walk">

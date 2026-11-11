@@ -1,13 +1,13 @@
-/** 按会话、对话轮次及起终点转交路线，保留同一组中的不同交通方式。 */
+/** 按会话、轮次及地点顺序转交路线，保留同一组中的不同交通方式。 */
 import type { Context } from '@deepseek-ai/cordis'
 import { randomUUID } from 'node:crypto'
 import type { ToolExecution, ToolExecutionToken } from '@deepseek-ai/dsh-tools'
-import type { ChatRouteItem, ChatRouteView, PlanRouteResult } from './types.ts'
+import type { ChatRouteItem, ChatRouteView, RouteResult } from './types.ts'
 
 type LiveSession = NonNullable<ToolExecution['agent']>['session']
 interface RequestOrder { order: number; turn: symbol }
-interface Candidate extends RequestOrder { result: PlanRouteResult; signal: AbortSignal }
-interface RouteGroup { turn: symbol; order: number; view: ChatRouteView }
+interface Candidate extends RequestOrder { result: RouteResult; signal: AbortSignal }
+interface RouteGroup { turn: symbol; order: number; stops: string[]; view: ChatRouteView }
 const empty: ChatRouteView = { revision: 0, groupId: '', results: [] }
 
 export class SessionRoutes {
@@ -32,7 +32,7 @@ export class SessionRoutes {
       if (status === 'idle') this.turns.delete(agent.session)
     }, { global: true })
     ctx.on('tools/pre-execute', (execution, next) => {
-      if (execution.name === 'trip_plan_route' && execution.agent) {
+      if ((execution.name === 'trip_plan_route' || execution.name === 'trip_plan_multi_stop_route') && execution.agent) {
         this.pending.set(execution.token, { order: ++this.order,
           // 步骤外的程序调用独立成组，避免把没有轮次依据的查询合并。
           turn: this.turns.get(execution.agent.session)?.key ?? Symbol() })
@@ -49,11 +49,13 @@ export class SessionRoutes {
         || !session || ctx.sessions.get(session.id) !== session) return
       const candidates = staged?.session === session ? [...staged.candidates] : []
       const value = outcome.value
-      if (request && value && typeof value === 'object' && !Array.isArray(value)
-        && value.source === 'AMAP' && (value.status === 'found' || value.status === 'no-route')
-        && Array.isArray(value.routes) && value.origin && value.destination
-        && ['walking', 'bicycling', 'driving', 'transit'].includes(String(value.mode))) {
-        candidates.push({ ...request, result: value as unknown as PlanRouteResult, signal: execution.signal })
+      if (request && value && typeof value === 'object' && !Array.isArray(value) && value.source === 'AMAP'
+        && ['walking', 'bicycling', 'driving', 'transit'].includes(String(value.mode))
+        && (execution.name === 'trip_plan_route'
+          ? (value.status === 'found' || value.status === 'no-route') && Array.isArray(value.routes) && value.origin && value.destination
+          : (value.status === 'complete' || value.status === 'incomplete') && Array.isArray(value.stops)
+            && value.stops.length >= 3 && Array.isArray(value.legs))) {
+        candidates.push({ ...request, result: value as unknown as RouteResult, signal: execution.signal })
       }
       if (!candidates.length) return
       if (execution.parent !== undefined) {
@@ -87,9 +89,9 @@ export class SessionRoutes {
   private commit(session: LiveSession, candidate: Candidate): boolean {
     const current = this.latest.get(session)
     const { result, order, turn } = candidate
-    const first = current?.view.results[0]?.result
-    const sameGroup = current?.turn === turn && first?.origin.placeId === result.origin.placeId
-      && first?.destination.placeId === result.destination.placeId
+    const stops = ('stops' in result ? result.stops : [result.origin, result.destination]).map(stop => stop.placeId)
+    const sameGroup = current?.turn === turn && current.stops.length === stops.length
+      && current.stops.every((stop, index) => stop === stops[index])
     let results: ChatRouteItem[]
     if (sameGroup) {
       const previous = current!.view.results.find(item => item.result.mode === result.mode)
@@ -101,7 +103,7 @@ export class SessionRoutes {
     }
     results.push({ revision: order, result })
     results.sort((a, b) => a.revision - b.revision)
-    this.latest.set(session, { turn, order: Math.max(order, sameGroup ? current!.order : 0),
+    this.latest.set(session, { turn, stops, order: Math.max(order, sameGroup ? current!.order : 0),
       view: { revision: ++this.revision, groupId: sameGroup ? current!.view.groupId : this.epoch + ':' + order, results } })
     return true
   }

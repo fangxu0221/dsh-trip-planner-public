@@ -8,7 +8,7 @@ import { TripGlyph } from './TripGlyph.tsx'
 export interface Selection { reference: EndpointReference; name: string; address: string | null }
 type Props = SavedPlaceActions & Pick<TripClientState, 'favorites' | 'write'> & {
   title: string
-  purpose: 'origin' | 'destination' | 'add-favorite'
+  purpose: 'origin' | 'destination' | 'waypoint' | 'add-favorite'
   search: ReturnType<TripQueries['state']['getSnapshot']>['search']
   cached: ReturnType<TripQueries['state']['getSnapshot']>['cached']
   cacheStats: ReturnType<TripQueries['state']['getSnapshot']>['cacheStats']
@@ -80,7 +80,8 @@ export function PlacePicker({ title, purpose, search, cached, cacheStats, favori
   return <dialog ref={dialog} className="trip-planner-picker trip-planner-card" aria-labelledby={titleId}
     onCancel={event => { event.preventDefault(); onClose() }}>
     <div className="trip-planner-picker-header">
-      <span className="trip-planner-picker-icon" data-purpose={purpose}><TripGlyph name={purpose === 'add-favorite' ? 'favorites' : purpose} /></span>
+      <span className="trip-planner-picker-icon" data-purpose={purpose}><TripGlyph name={purpose === 'add-favorite' ? 'favorites'
+        : purpose === 'waypoint' ? 'destination' : purpose} /></span>
       <div><h2 id={titleId}>{title}</h2><p>{onSelect ? '搜索地点或从收藏中选择' : '搜索地点并保存到收藏'}</p></div>
       <button className="trip-planner-picker-close" type="button" aria-label="关闭" onClick={onClose}><TripGlyph name="close" /></button>
     </div>

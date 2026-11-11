@@ -64,7 +64,17 @@ export const styles = `
   text-align: start; border: 0; border-radius: 10px; background: transparent; cursor: pointer;
 }
 .trip-planner-endpoints button:hover { background: color-mix(in srgb, var(--trip-accent) 7%, transparent); }
-.trip-planner-endpoints button:focus-visible, .trip-planner-controls button:focus-visible, .trip-planner-route-source button:focus-visible {
+.trip-planner-chat-stop {
+  position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center;
+  gap: 10px; padding: 9px 11px;
+}
+.trip-planner-chat-stop-mode { margin-top: 8px; }
+.trip-planner-route-order { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.trip-planner-route-order select {
+  min-width: 0; padding: 4px 8px; color: var(--trip-text); font: inherit;
+  background: var(--trip-surface); border: 1px solid var(--trip-border); border-radius: 8px;
+}
+.trip-planner-endpoints button:focus-visible, .trip-planner-controls :is(button, select):focus-visible, .trip-planner-route-source button:focus-visible {
   outline: 2px solid var(--trip-accent); outline-offset: 2px;
 }
 .trip-planner-endpoint-marker {
@@ -74,6 +84,19 @@ export const styles = `
   background: color-mix(in srgb, var(--trip-pin) 15%, var(--trip-surface));
 }
 .trip-planner-endpoints [data-endpoint="destination"] .trip-planner-endpoint-marker { --trip-pin: #c06e2a; }
+.trip-planner-endpoints [data-endpoint="waypoint"] .trip-planner-endpoint-marker { --trip-pin: #575bbb; font-weight: 600; }
+.trip-planner-waypoint { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.trip-planner-waypoint-actions { display: flex; gap: 2px; padding-inline-end: 8px; }
+.trip-planner-waypoint-actions button { display: block; width: auto; padding: 4px 6px; color: var(--trip-muted); }
+.trip-planner-waypoint-actions button:disabled { opacity: .4; cursor: default; }
+.trip-planner-endpoints .trip-planner-add-waypoint {
+  display: block; width: auto; margin-inline-start: 42px; padding: 5px 8px; color: var(--trip-accent);
+}
+.trip-planner-leg-status {
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px;
+  padding: 10px 12px; overflow-wrap: anywhere;
+}
+.trip-planner-leg-status small { color: var(--trip-muted); }
 .trip-planner-endpoint-text { display: grid; gap: 2px; overflow-wrap: anywhere; }
 .trip-planner-endpoint-text small, .trip-planner-endpoint-next { color: var(--trip-muted); }
 .trip-planner-endpoint-next { font-size: 20px; }

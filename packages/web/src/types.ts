@@ -112,9 +112,37 @@ export interface PlanRouteResult {
   warnings: string[]
 }
 
+export type RouteOrder = 'given' | 'optimized'
+export interface PlanMultiStopRouteQuery {
+  stops: EndpointReference[]
+  mode: RouteMode
+  order?: RouteOrder
+  pinStart?: boolean
+  pinEnd?: boolean
+}
+export interface PlanMultiStopRouteResult {
+  source: 'AMAP'
+  stops: RouteEndpoint[]
+  mode: RouteMode
+  order: RouteOrder
+  status: 'complete' | 'incomplete'
+  legs: {
+    from: number
+    to: number
+    status: 'found' | 'no-route' | 'query-failed' | 'not-queried'
+    route: RouteAlternative | null
+    fetchedAt: string | null
+    warnings: string[]
+    message: string | null
+  }[]
+  totalDurationSeconds: number | null
+  totalDistanceMeters: number | null
+}
+export type RouteResult = PlanRouteResult | PlanMultiStopRouteResult
+
 export interface ChatRouteRequest { sessionId: string }
-/** 同一轮、同一起终点的交通方式结果。条目版本按发起顺序递增。 */
-export interface ChatRouteItem { revision: number; result: PlanRouteResult }
+/** 同一轮、同一有序地点列表的交通方式结果。条目版本按发起顺序递增。 */
+export interface ChatRouteItem { revision: number; result: RouteResult }
 export interface ChatRouteView {
   revision: number
   groupId: string

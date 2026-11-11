@@ -173,7 +173,7 @@ function routeSummary(segments: RouteSegment[], fallback: DisplayMode): SummaryL
   return summary.length ? summary : [{ options: [{ mode: fallback, label: modeLabels[fallback] }] }]
 }
 
-export function routeAlternatives(result: PlanRouteResult) {
+export function routeAlternatives(result: Pick<PlanRouteResult, 'mode' | 'routes'>) {
   const fallback: DisplayMode = result.mode === 'transit' ? 'transit' : result.mode
   const durations = result.routes.map(route => route.durationSeconds)
   const shortest = durations.length > 1 && durations.every(value => value !== null) ? Math.min(...durations) : null

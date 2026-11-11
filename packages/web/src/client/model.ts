@@ -4,7 +4,7 @@ import { RemoteStreamCarrierError, type ClientRemote, type RemoteStream } from '
 import type {} from '../../lib/typert.remote-client.js'
 import type { RemoteResult, RemoteStreamHandle } from '@deepseek-ai/dsh-typert-protocol'
 import type {
-  PlacesSearchResult, PlanRouteQuery, PlanRouteResult, RenameSavedPlaceRequest, SavedPlacesView,
+  PlacesSearchResult, PlanRouteQuery, PlanMultiStopRouteQuery, RouteResult, RenameSavedPlaceRequest, SavedPlacesView,
   SavedPlaceTarget, SavedPlaceWriteResult, SavePlaceRequest, SearchPlacesQuery,
   RenameSavedRouteRequest, SavedRoutesView, SavedRouteWriteResult, SaveRouteRequest, UpdateSavedRouteEndpointsRequest, ChatRouteView,
   CachedPlacesQuery, CachedPlacesView, QueryCacheStats,
@@ -12,7 +12,7 @@ import type {
 
 type QueryState<T> = { status: 'idle' | 'loading' } | { status: 'success'; value: T } | { status: 'error'; message: string }
 type QueryResult<T> = { ok: true; value: T } | { ok: false; error: { message: string } }
-interface TripResults { search: PlacesSearchResult; route: PlanRouteResult; cached: CachedPlacesView; cacheStats: QueryCacheStats }
+interface TripResults { search: PlacesSearchResult; route: RouteResult; cached: CachedPlacesView; cacheStats: QueryCacheStats }
 interface CollectionState<T> {
   status: 'connecting' | 'live' | 'reconnecting' | 'failed'
   view: T | null
@@ -224,7 +224,7 @@ export class TripClientModel {
 export class TripQueries {
   readonly state = createSnapshotStore<TripQueryState>({ search: { status: 'idle' }, route: { status: 'idle' }, cached: { status: 'idle' }, cacheStats: { status: 'idle' } })
   private readonly pending: Partial<Record<keyof TripResults, AbortController>> = {}
-  private readonly api: Pick<TripApi, 'searchPlaces' | 'planRoute' | 'listCachedPlaces' | 'touchCachedPlace' | 'cacheStats' | 'clearPlaceCache'>
+  private readonly api: Pick<TripApi, 'searchPlaces' | 'planRoute' | 'planMultiStopRoute' | 'listCachedPlaces' | 'touchCachedPlace' | 'cacheStats' | 'clearPlaceCache'>
   private clearingCache = false
 
   constructor(api: TripQueries['api']) { this.api = api }
@@ -235,6 +235,14 @@ export class TripQueries {
 
   plan(query: PlanRouteQuery): Promise<void> {
     return this.run('route', signal => this.api.planRoute(query, signal))
+  }
+
+  planMultiStop(query: PlanMultiStopRouteQuery): Promise<void> {
+    return this.run('route', signal => this.api.planMultiStopRoute(query, signal))
+  }
+
+  cancelRoute(): void {
+    if (this.pending.route) this.reset('route')
   }
 
   cachedPlaces(query: CachedPlacesQuery): Promise<void> {

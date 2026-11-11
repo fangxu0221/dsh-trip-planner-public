@@ -10,6 +10,7 @@ import type {} from '../../../src/services/query-cache.ts'
 import { SessionRoutes } from './session-routes.ts'
 import type {
   PlacesSearchResult, PlanRouteQuery, PlanRouteResult, RenameSavedPlaceRequest, SavedPlaceOption, SavedPlacesView,
+  PlanMultiStopRouteQuery, PlanMultiStopRouteResult,
   SavedPlaceTarget, SavedPlaceWriteResult, SavePlaceRequest, SearchPlacesQuery,
   RenameSavedRouteRequest, SavedRoutesView, SavedRouteWriteResult, SaveRouteRequest, UpdateSavedRouteEndpointsRequest,
   ChatRouteRequest, ChatRouteView,
@@ -161,6 +162,11 @@ export class TripPlannerController extends TypertRemoteService {
   @Remote('planRoute')
   async planRoute(query: PlanRouteQuery, signal: AbortSignal): Promise<PlanRouteResult> {
     return this.query(signal, () => this.ctx.routePlanner.plan(query, { signal }))
+  }
+
+  @Remote('planMultiStopRoute')
+  async planMultiStopRoute(query: PlanMultiStopRouteQuery, signal: AbortSignal): Promise<PlanMultiStopRouteResult> {
+    return this.query(signal, () => this.ctx.routePlanner.planMultiStop(query, { signal }))
   }
 
   // 让 Harness 网关在调用前按 sessionId 校验会话访问权限。

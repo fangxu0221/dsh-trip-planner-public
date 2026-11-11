@@ -215,6 +215,9 @@ export class AmapMcpAdapter {
       if (result.isError) {
         const message = result.error.message.replace(/[a-f0-9]{32}/gi, '[REDACTED]')
           .replace(/([?&](?:key|token|secret)=)[^&\s"'<>]+/gi, '$1[REDACTED]')
+        if (result.error.info?.code === 'TRIP_AGENT_QUERY_BUDGET') {
+          throw new HarnessError(message, 'TRIP_AGENT_QUERY_BUDGET')
+        }
         throw new HarnessError('高德查询调用失败：' + message, 'TRIP_UPSTREAM_ERROR')
       }
       if (result.concludesTurn) execution.concludeTurn?.()
