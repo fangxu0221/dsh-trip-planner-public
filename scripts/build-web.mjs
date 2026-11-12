@@ -7,7 +7,12 @@ import { fileURLToPath } from 'node:url'
 import { FaceModelEmitter, WorkspaceAnalyzer, writePackageArtifacts } from '@deepseek-ai/dsh-typert-generator'
 import { build } from 'esbuild'
 
-const root = fileURLToPath(new URL('../', import.meta.url))
+// 打包时在临时工作区用发布包名重新生成协议，开发构建仍用原工作区。
+const [workspaceFlag, workspacePath, ...extra] = process.argv.slice(2)
+if (workspaceFlag !== undefined && (workspaceFlag !== '--workspace' || !workspacePath || extra.length)) {
+  throw new Error('用法：node scripts/build-web.mjs [--workspace <构建工作区>]')
+}
+const root = workspacePath ? resolve(workspacePath) : fileURLToPath(new URL('../', import.meta.url))
 const directory = resolve(root, 'packages/web')
 const { name } = JSON.parse(await readFile(resolve(directory, 'package.json'), 'utf8'))
 const require = createRequire(import.meta.url)

@@ -10,6 +10,7 @@
   "scripts": {
     "configure": "node scripts/configure.mjs",
     "build:web": "node scripts/build-web.mjs",
+    "pack:bundle": "node scripts/pack-bundle.mjs",
     "start:web": "node scripts/start-web.mjs",
     "typecheck": "tsc --noEmit"
   },

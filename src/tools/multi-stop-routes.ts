@@ -11,7 +11,7 @@ export const inject = ['tools', 'routePlanner']
 
 const nullableNumber = { oneOf: [{ type: 'number' }, { type: 'null' }], required: true } as const
 const nullableText = { oneOf: [{ type: 'string' }, { type: 'null' }], required: true } as const
-const outputSchema = { type: 'object', additionalProperties: false, properties: {
+export const multiStopRouteOutputSchema = { type: 'object', additionalProperties: false, properties: {
   source: routeOutputSchema.properties.source,
   stops: { type: 'array', required: true, items: endpointOutput },
   mode: routeOutputSchema.properties.mode,
@@ -59,7 +59,7 @@ export function apply(ctx: Context): void {
       pinEnd: { type: 'boolean', description: '仅 optimized 使用。true 固定 stops 最后一项为终点，false 由排序选择终点。' },
       continuation: continuationInput,
     },
-    output: { schema: outputSchema, render: (_args, value) => [{ type: 'text', text: render(value) }] },
+    output: { schema: multiStopRouteOutputSchema, render: (_args, value) => [{ type: 'text', text: render(value) }] },
     execute: ({ continuation: _continuation, ...query }, execution) => ctx.routePlanner.planMultiStop(query, execution),
   }))
 }

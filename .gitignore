@@ -2,6 +2,13 @@
 /*
 !/.gitignore
 !/README.md
+!/docs/
+/docs/*
+!/docs/screenshots/
+/docs/screenshots/*
+!/docs/screenshots/route-planning.png
+!/docs/screenshots/open-trip-planner.png
+!/docs/screenshots/day-itinerary.png
 !/LICENSE
 !/cordis.example.yml
 !/package.json
@@ -19,6 +26,7 @@
 !/scripts/
 /scripts/*
 !/scripts/build-web.mjs
+!/scripts/pack-bundle.mjs
 !/scripts/configure.mjs
 !/scripts/start-web.mjs
 

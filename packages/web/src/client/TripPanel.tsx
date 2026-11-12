@@ -10,6 +10,7 @@ import type {
 } from '../types.ts'
 import { type TripClientState, type TripQueries } from './model.ts'
 import { ChatRouteResults } from './ChatRouteResults.tsx'
+import { DayItineraryResults } from './DayItineraryResults.tsx'
 import { PlacePicker, savedSelection, type Selection } from './PlacePicker.tsx'
 import { RouteResults } from './RouteResults.tsx'
 import { MultiStopRouteResults } from './MultiStopRouteResults.tsx'
@@ -128,7 +129,8 @@ export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...ac
   const activeChat = (chatSelection?.groupId === chatVersion
     ? conversation?.results.find(item => item.result.mode === chatSelection.mode)?.result : undefined)
     ?? conversation?.results[0]?.result
-  const showChat = !!activeChat && resultSource === 'chat'
+  const itinerary = conversation?.itinerary
+  const showChat = !!(activeChat || itinerary) && resultSource === 'chat'
   const editingSave = !!saveResult && saveResult === (showChat ? activeChat : route.status === 'success' ? route.value : undefined)
   const places = favorites.view?.places ?? []
   const origin = currentSelection(endpoints.origin, places)
@@ -304,13 +306,18 @@ export function TripPanel({ sessionId, useTrip, useTabInfo, createQueries, ...ac
         <p>高德地图</p>
         <h1>出行规划</h1>
       </header>
-      {activeChat && <div className="trip-planner-route-source">
+      {(activeChat || itinerary) && <div className="trip-planner-route-source">
         {showChat ? <>
           <strong><TripGlyph name="routes" />来自对话</strong>
           <button type="button" onClick={() => { setSaveResult(undefined); setResultSource('manual') }}>返回手动规划</button>
-        </> : <button type="button" onClick={() => { setSaveResult(undefined); setResultSource('chat') }}>查看对话路线</button>}
+        </> : <button type="button" onClick={() => { setSaveResult(undefined); setResultSource('chat') }}>
+          {itinerary ? '查看对话行程' : '查看对话路线'}
+        </button>}
       </div>}
-      {showChat && activeChat ? <ChatRouteStops result={activeChat} /> : <section className="trip-planner-controls" aria-label="路线设置">
+      {showChat && itinerary ? <DayItineraryResults result={itinerary} onClear={() => {
+        actions.onDismissChatRoute(sessionId)
+        setResultSource('manual')
+      }} /> : showChat && activeChat ? <ChatRouteStops result={activeChat} /> : <section className="trip-planner-controls" aria-label="路线设置">
         <div className="trip-planner-endpoints" role="group" aria-label="起点、途经点和终点">
           <StopButton endpoint="origin" label="起点" selection={origin} onClick={() => setPicker('origin')} />
           {waypoints.map(({ id }, index) => <div className="trip-planner-waypoint" key={id}>

@@ -29,7 +29,7 @@ export type TripClientState = { [K in Collection]: CollectionState<CollectionVie
 type TripApi = ClientRemote['tripPlanner']
 
 export function chatRouteVersion(view: ChatRouteView): string {
-  return view.results.length ? view.groupId + ':' + view.revision : ''
+  return view.results.length || view.itinerary ? view.groupId + ':' + view.revision : ''
 }
 
 export class TripClientModel {
@@ -95,7 +95,7 @@ export class TripClientModel {
         const view = frame.value
         const version = chatRouteVersion(view)
         if (version && this.dismissedChatRoutes.get(sessionId) === view.groupId) continue
-        this.state.update(state => { state.chatRoute = view.results.length ? { sessionId, view } : null })
+        this.state.update(state => { state.chatRoute = version ? { sessionId, view } : null })
         if (!version) continue
         if (this.revealedChatRoutes.get(sessionId) === view.groupId) continue
         this.revealedChatRoutes.set(sessionId, view.groupId)

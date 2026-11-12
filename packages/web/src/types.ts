@@ -141,6 +141,26 @@ export interface PlanMultiStopRouteResult {
 }
 export type RouteResult = PlanRouteResult | PlanMultiStopRouteResult
 
+export interface DayItineraryResult {
+  source: 'AMAP'
+  city: string
+  theme: 'culture' | 'park' | 'landmark'
+  mode: RouteMode
+  status: 'ready' | 'over-window' | 'incomplete' | 'insufficient-places'
+  startMinute: number
+  endMinute: number
+  defaultStart: boolean
+  defaultEnd: boolean
+  visits: { placeId: string; name: string; address: string | null; reason: string; stayMinutes: number }[]
+  route: RouteResult | null
+  timeline: {
+    kind: 'visit' | 'travel'; title: string; placeId?: string; startMinute: number | null; endMinute: number | null; legIndex: number | null
+  }[]
+  finishMinute: number | null
+  overByMinutes: number | null
+  message: string | null
+}
+
 export interface ChatRouteRequest { sessionId: string }
 /** 同一轮、同一有序地点列表的交通方式结果。条目版本按发起顺序递增。 */
 export interface ChatRouteItem { revision: number; result: RouteResult }
@@ -148,6 +168,7 @@ export interface ChatRouteView {
   revision: number
   groupId: string
   results: ChatRouteItem[]
+  itinerary?: DayItineraryResult
 }
 
 export type SavedRouteEndpoint = { kind: 'saved'; savedPlaceId: string; label: string }

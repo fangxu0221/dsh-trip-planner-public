@@ -3,12 +3,12 @@ import type { Context } from '@deepseek-ai/cordis'
 import { randomUUID } from 'node:crypto'
 import type { ToolExecution, ToolExecutionToken } from '@deepseek-ai/dsh-tools'
 import { maxMultiStopPlaces } from '../../../src/contracts/route-limits.ts'
-import type { ChatRouteItem, ChatRouteView, PlanMultiStopRouteResult, RouteResult } from './types.ts'
+import type { ChatRouteItem, ChatRouteView, DayItineraryResult, PlanMultiStopRouteResult, RouteResult } from './types.ts'
 
 type LiveSession = NonNullable<ToolExecution['agent']>['session']
 type MultiStopLeg = PlanMultiStopRouteResult['legs'][number]
 interface RequestOrder { order: number; turn: symbol; continuation?: 'append' | 'separate' }
-interface Candidate extends RequestOrder { result: RouteResult; signal: AbortSignal }
+interface Candidate extends RequestOrder { result: RouteResult | DayItineraryResult; signal: AbortSignal }
 interface RouteGroup { turn: symbol; order: number; stops: string[]; view: ChatRouteView }
 const empty: ChatRouteView = { revision: 0, groupId: '', results: [] }
 
@@ -65,7 +65,7 @@ export class SessionRoutes {
       if (status === 'idle') this.turns.delete(agent.session)
     }, { global: true })
     ctx.on('tools/pre-execute', (execution, next) => {
-      if ((execution.name === 'trip_plan_route' || execution.name === 'trip_plan_multi_stop_route') && execution.agent) {
+      if (execution.agent && ['trip_plan_route', 'trip_plan_multi_stop_route', 'trip_plan_day_itinerary'].includes(execution.name)) {
         const args = execution.arguments
         const continuation = args && typeof args === 'object' && 'continuation' in args ? args.continuation : undefined
         this.pending.set(execution.token, { order: ++this.order,
@@ -88,11 +88,12 @@ export class SessionRoutes {
       const value = outcome.value
       if (request && value && typeof value === 'object' && !Array.isArray(value) && value.source === 'AMAP'
         && ['walking', 'bicycling', 'driving', 'transit'].includes(String(value.mode))
-        && (execution.name === 'trip_plan_route'
+        && (execution.name === 'trip_plan_day_itinerary' ? Array.isArray(value.timeline) && Array.isArray(value.visits)
+          : execution.name === 'trip_plan_route'
           ? (value.status === 'found' || value.status === 'no-route') && Array.isArray(value.routes) && value.origin && value.destination
           : (value.status === 'complete' || value.status === 'incomplete') && Array.isArray(value.stops)
             && value.stops.length >= 3 && Array.isArray(value.legs))) {
-        candidates.push({ ...request, result: value as unknown as RouteResult, signal: execution.signal })
+        candidates.push({ ...request, result: value as unknown as RouteResult | DayItineraryResult, signal: execution.signal })
       }
       if (!candidates.length) return
       if (execution.parent !== undefined) {
@@ -126,6 +127,12 @@ export class SessionRoutes {
   private commit(session: LiveSession, candidate: Candidate): boolean {
     const current = this.latest.get(session)
     const { order, turn, continuation } = candidate
+    if ('timeline' in candidate.result) {
+      if (current && current.order >= order) return false
+      this.latest.set(session, { turn, order, stops: [],
+        view: { revision: ++this.revision, groupId: this.epoch + ':' + order, results: [], itinerary: candidate.result } })
+      return true
+    }
     let result = candidate.result
     const previous = current?.turn === turn && current.view.results.find(item => item.result.mode === result.mode)
     if (previous && previous.revision < order && continuation !== 'separate') {

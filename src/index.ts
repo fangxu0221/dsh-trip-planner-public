@@ -14,6 +14,8 @@ import * as queryCache from './providers/query-cache.ts'
 import * as placePolicy from './prompts/place-policy.ts'
 import * as placeDetails from './tools/place-details.ts'
 import PlaceQueryPolicy from './policies/place-query.ts'
+import ItineraryPlanner from './providers/itinerary-planner.ts'
+import * as dayItinerary from './tools/day-itinerary.ts'
 
 export { Config } from './config.ts'
 export const name = 'trip-planner'
@@ -34,4 +36,6 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   await ctx.plugin(RoutePlanner, config)
   await ctx.plugin(routeTools)
   await ctx.plugin(multiStopRouteTools)
+  await ctx.plugin(ItineraryPlanner)
+  await ctx.plugin(dayItinerary)
 }

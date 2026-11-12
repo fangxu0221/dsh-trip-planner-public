@@ -42,6 +42,14 @@ export const styles = `
 .trip-planner-card { min-width: 0; padding: 12px; border: 1px solid var(--trip-border); border-radius: 12px; font-size: 14px; }
 .trip-planner-card h2 { font-size: 17px; font-weight: 650; margin: 0 0 14px; }
 .trip-planner-card h3 { font-size: 14px; font-weight: 650; margin: 0; }
+.trip-planner-itinerary { font-size: 14px; }
+.trip-planner-itinerary h2 { margin: 0; font-size: 16px; }
+.trip-planner-itinerary-window { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin: 8px 0; }
+.trip-planner-timeline { margin: 12px 0; padding: 0; list-style: none; }
+.trip-planner-timeline > li { padding: 8px 12px; border-inline-start: 2px solid var(--trip-border); overflow-wrap: anywhere; }
+.trip-planner-timeline > li[data-kind=visit] { border-inline-start-color: var(--trip-accent); background: var(--trip-hover); }
+.trip-planner-timeline > li small { display: block; color: var(--trip-muted); }
+.trip-planner-timeline summary { cursor: pointer; }
 .trip-planner-card label { display: grid; gap: 5px; min-width: 0; }
 .trip-planner-card input, .trip-planner-card select, .trip-planner-card button {
   font: inherit; color: inherit; border: 1px solid var(--trip-border); border-radius: 8px; padding: 8px 10px;
