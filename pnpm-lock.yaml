@@ -54,6 +54,18 @@ importers:
       '@deepseek-ai/dsh-client-ui-slots':
         specifier: link:../deepseek-harness/packages/client/ui-slots
         version: link:../deepseek-harness/packages/client/ui-slots
+      '@deepseek-ai/dsh-scope':
+        specifier: link:../deepseek-harness/packages/core/scope
+        version: link:../deepseek-harness/packages/core/scope
+      '@deepseek-ai/dsh-storage':
+        specifier: link:../deepseek-harness/packages/storage/storage
+        version: link:../deepseek-harness/packages/storage/storage
+      '@deepseek-ai/dsh-storage-json':
+        specifier: link:../deepseek-harness/packages/storage/storage-json
+        version: link:../deepseek-harness/packages/storage/storage-json
+      '@deepseek-ai/dsh-tool-executor-native':
+        specifier: link:../deepseek-harness/packages/core/tool-executor-native
+        version: link:../deepseek-harness/packages/core/tool-executor-native
       '@deepseek-ai/dsh-typert-generator':
         specifier: link:../deepseek-harness/packages/typert/generator
         version: link:../deepseek-harness/packages/typert/generator

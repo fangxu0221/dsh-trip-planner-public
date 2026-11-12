@@ -41,3 +41,15 @@ fixtures/
 *.test.*
 *.spec.*
 *.log
+
+# 公开可离线运行的核心用例和明确列出的模拟样本。
+!/tests/
+/tests/*
+!/tests/core/
+/tests/core/*
+!/tests/core/*.test.ts
+!/tests/core/storage-helper.ts
+!/tests/core/data/
+/tests/core/data/*
+!/tests/core/data/routes.ts
+!/tests/core/data/route-presentation.ts

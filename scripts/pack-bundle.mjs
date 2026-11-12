@@ -58,10 +58,11 @@ export async function apply(ctx, config) {
   const installReadme = readme.replace(/^!\[.*\]\(docs\/screenshots\/[^)\r\n]+\)\r?\n(?:\r?\n)?/gm, '')
   await Promise.all([
     ...['client.js', 'typert.host.js'].map(file => copyFile(join(web, 'lib', file), join(lib, file))),
+    copyFile(join(project, 'LICENSE'), join(output, 'LICENSE')),
     writeFile(join(output, 'README.md'), installReadme),
     writeFile(join(output, 'cordis.patch.yml'), '- insert:\n    - id: trip-planner\n      name: ' + manifest.name + '\n'),
     writeFile(join(output, 'package.json'), json({
-      name: manifest.name, version: manifest.version, description: manifest.description, type: 'module',
+      name: manifest.name, version: manifest.version, description: manifest.description, license: manifest.license, type: 'module',
       engines: { node: manifest.engines.node, dsh: supportedDsh },
       files: ['lib', 'cordis.patch.yml'],
       exports: {
@@ -82,7 +83,7 @@ export async function apply(ctx, config) {
   })
   const metadata = JSON.parse(pack)
   const archive = Array.isArray(metadata) ? metadata[0] : metadata[manifest.name]
-  const expected = ['README.md', 'cordis.patch.yml', 'lib/client.js', 'lib/index.js', 'lib/typert.host.js', 'package.json']
+  const expected = ['LICENSE', 'README.md', 'cordis.patch.yml', 'lib/client.js', 'lib/index.js', 'lib/typert.host.js', 'package.json']
   if (archive.files.map(file => file.path).sort().join('\n') !== expected.join('\n')) {
     throw new Error('安装包包含意外文件，请检查打包清单。')
   }

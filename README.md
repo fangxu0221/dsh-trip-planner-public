@@ -126,3 +126,17 @@ pnpm.cmd dsh web --patch '<插件目录>/cordis.yml' --port 3083
 维护者可以在插件目录运行 `pnpm.cmd run pack:bundle`。预构建安装包输出到 `.tmp/release/`。
 
 修改代码后，运行 `pnpm.cmd run typecheck` 检查服务端类型，再执行 `pnpm.cmd run build:web` 生成面板和协议，重启当前 Web 实例。
+
+## 运行核心测试
+
+完成上面的 Harness 源码构建和插件依赖安装后，在插件目录运行。测试使用模拟地图响应和临时 JSON 目录，无需配置高德 Key 或模型。
+
+```powershell
+pnpm.cmd test
+```
+
+用例位于源码的 `tests/core/`，覆盖路线排序与分段、单日行程、换乘展示、地点和路线收藏、查询缓存及 Agent 请求预算。
+
+## 许可证
+
+本项目采用 [MIT 许可证](LICENSE)。

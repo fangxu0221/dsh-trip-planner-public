@@ -2,6 +2,7 @@
   "name": "dsh-trip-planner",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "DeepSeek Harness 出行规划插件：高德地点搜索、服务分层与结构化工具输出",
   "engines": {
@@ -12,6 +13,7 @@
     "build:web": "node scripts/build-web.mjs",
     "pack:bundle": "node scripts/pack-bundle.mjs",
     "start:web": "node scripts/start-web.mjs",
+    "test": "node --test --test-timeout=15000 tests/core/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "packageManager": "pnpm@11.28.5",
@@ -33,6 +35,10 @@
     "@deepseek-ai/dsh-client-ui-session": "link:../deepseek-harness/packages/client/ui-session",
     "@deepseek-ai/dsh-client-ui-sidebar-right": "link:../deepseek-harness/packages/client/ui-sidebar-right",
     "@deepseek-ai/dsh-client-ui-slots": "link:../deepseek-harness/packages/client/ui-slots",
+    "@deepseek-ai/dsh-scope": "link:../deepseek-harness/packages/core/scope",
+    "@deepseek-ai/dsh-storage": "link:../deepseek-harness/packages/storage/storage",
+    "@deepseek-ai/dsh-storage-json": "link:../deepseek-harness/packages/storage/storage-json",
+    "@deepseek-ai/dsh-tool-executor-native": "link:../deepseek-harness/packages/core/tool-executor-native",
     "@deepseek-ai/dsh-typert-generator": "link:../deepseek-harness/packages/typert/generator",
     "@types/react": "link:../deepseek-harness/node_modules/@types/react",
     "esbuild": "link:../deepseek-harness/node_modules/.pnpm/esbuild@0.28.2/node_modules/esbuild",
