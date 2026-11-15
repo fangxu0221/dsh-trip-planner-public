@@ -12,8 +12,12 @@ import QueryCacheService, { type CachedQuery, type LoadedQuery } from '../servic
 
 export const name = 'trip-query-cache'
 export const inject = ['storageDomain']
-const keyOf = (request: CacheRequest) => createHash('sha256').update(JSON.stringify(request.kind === 'search'
-  ? ['search', request.keywords, request.city, request.limit] : ['details', request.placeId])).digest('hex')
+function keyOf(request: CacheRequest): string {
+  const parts = request.kind === 'search' ? ['search', request.keywords, request.city, request.limit]
+    : request.kind === 'details' ? ['details', request.placeId]
+      : ['region', request.coordinates.longitude, request.coordinates.latitude]
+  return createHash('sha256').update(JSON.stringify(parts)).digest('hex')
+}
 const text = (value: string) => value.normalize('NFKC').trim().toLowerCase()
 
 interface Flight { controller: AbortController; promise: Promise<CachedQuery>; waiters: number }

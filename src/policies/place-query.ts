@@ -3,7 +3,7 @@ import { Service, type Context } from '@deepseek-ai/cordis'
 import { HarnessError, type ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import type { Config } from '../config.ts'
-import { AMAP_DETAILS_TOOL, AMAP_ROUTE_TOOLS, AMAP_SEARCH_TOOL } from '../adapters/amap-mcp.ts'
+import { AMAP_DETAILS_TOOL, AMAP_REGION_TOOL, AMAP_ROUTE_TOOLS, AMAP_SEARCH_TOOL } from '../adapters/amap-mcp.ts'
 
 type Agent = NonNullable<ToolExecution['agent']>
 type QueryKind = 'search' | 'details' | 'route'
@@ -24,7 +24,8 @@ export default class PlaceQueryPolicy extends Service {
       if (!config.requireTripToolsForAgent || !execution.agent || this.internal.get(execution.callId) === execution.agent) return
       const tool = execution.name === AMAP_SEARCH_TOOL ? 'trip_search_places'
         : execution.name === AMAP_DETAILS_TOOL ? 'trip_get_place_details'
-          : routeNames.has(execution.name) ? 'trip_plan_route（两点）或 trip_plan_multi_stop_route（多地点）' : undefined
+          : execution.name === AMAP_REGION_TOOL ? 'trip_plan_day_itinerary'
+            : routeNames.has(execution.name) ? 'trip_plan_route（两点）或 trip_plan_multi_stop_route（多地点）' : undefined
       if (tool) return '请使用 ' + tool + '，由插件复用缓存并控制调用预算；不要直接调用底层高德能力。'
     })
     ctx.on('agent/pre-step', ({ agent, turn }, next) => {

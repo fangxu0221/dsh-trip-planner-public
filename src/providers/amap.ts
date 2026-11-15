@@ -3,7 +3,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
 import { AmapMcpAdapter } from '../adapters/amap-mcp.ts'
 import type { Config } from '../config.ts'
-import type { PlaceDetailsResult, PlacesSearchResult, ResolvedSearchPlacesQuery, SearchPlacesQuery } from '../contracts/travel.ts'
+import { coordinatesSchema } from '../contracts/query-cache.ts'
+import type { Coordinates, PlaceDetailsResult, PlaceRegion, PlacesSearchResult, ResolvedSearchPlacesQuery, SearchPlacesQuery } from '../contracts/travel.ts'
 import { routeModes, type ResolvedRouteQuery, type RouteDataResult } from '../contracts/routes.ts'
 import TravelDataService, { type QueryExecution } from '../services/travel-data.ts'
 
@@ -53,6 +54,12 @@ export default class AmapTravelData extends TravelDataService {
     const id = typeof placeId === 'string' ? placeId.trim() : ''
     if (!id || id.length > 100) throw new HarnessError('地点 ID 不能为空，且最多 100 个字符。', 'TRIP_INVALID_QUERY')
     return this.query(execution, signal => this.adapter.getPlaceDetails(id, execution, signal, options?.refresh))
+  }
+
+  override async getPlaceRegion(coordinates: Coordinates, execution: QueryExecution): Promise<PlaceRegion> {
+    const parsed = coordinatesSchema.safeParse(coordinates)
+    if (!parsed.success) throw new HarnessError('行政区核验需要有效的地点坐标。', 'TRIP_INVALID_QUERY')
+    return this.query(execution, signal => this.adapter.getPlaceRegion(parsed.data, execution, signal))
   }
 
   /** 数据服务也校验直接调用，避免其他消费方绕过路线服务后传入非法坐标。 */

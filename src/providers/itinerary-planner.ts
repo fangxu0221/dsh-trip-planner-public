@@ -1,8 +1,9 @@
 /** 使用有限的主题搜索、已选地点的路线及建议停留时间生成单日行程。 */
 import type { Context } from '@deepseek-ai/cordis'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
-import { dayItineraryQuerySchema, type DayItineraryQuery, type DayItineraryResult, type ItineraryItem, type ItineraryVisit } from '../contracts/day-itinerary.ts'
+import { dayItineraryQuerySchema, type DayItineraryQuery, type DayItineraryResult, type ItineraryConstraints, type ItineraryItem, type ItineraryVisit } from '../contracts/day-itinerary.ts'
 import type { EndpointReference } from '../contracts/routes.ts'
+import type { Place, PlaceDetailsResult } from '../contracts/travel.ts'
 import ItineraryPlannerService from '../services/itinerary-planner.ts'
 import type {} from '../services/route-planner.ts'
 import type {} from '../services/saved-places.ts'
@@ -21,7 +22,20 @@ function minutes(time: string): number {
 }
 
 function cityKey(city: string): string {
-  return city.trim().replace(/市$/u, '')
+  return matchText(city).replace(/市$/u, '')
+}
+
+const matchText = (value: string) => value.normalize('NFKC').trim().toLowerCase()
+
+function textEvidence(place: Place, match: (value: string) => string | undefined): string | undefined {
+  const name = match(place.name)
+  if (name) return '名称匹配' + name
+  const category = place.category && match(place.category)
+  return category ? '类型匹配' + category : undefined
+}
+
+function preferred(place: Place, area: string | null): boolean {
+  return area !== null && [place.businessArea, place.district].some(value => value && matchText(value) === matchText(area))
 }
 
 function queryMessage(error: unknown, fallback: string): string {
@@ -79,14 +93,23 @@ export default class ItineraryPlanner extends ItineraryPlannerService {
     if (endMinute <= startMinute || (request.returnToOrigin && (!request.origin || request.destination))) {
       throw new HarnessError('结束时间须晚于开始时间。返回起点时请提供起点并省略独立终点。', 'TRIP_INVALID_ITINERARY')
     }
+    const constraints: ItineraryConstraints = {
+      includeDistricts: [...new Set(request.includeDistricts)], excludeDistricts: [...new Set(request.excludeDistricts)],
+      excludeKeywords: [...new Set(request.excludeKeywords)], preferredArea: request.preferredArea ?? null,
+    }
+    if (constraints.includeDistricts.some(district => constraints.excludeDistricts.includes(district))) {
+      throw new HarnessError('同一个区县不能同时指定为游览范围和排除范围，请确认。', 'TRIP_INVALID_ITINERARY')
+    }
     const signal = AbortSignal.any([this.lifetime.signal, execution.signal])
     signal.throwIfAborted()
     const result: DayItineraryResult = {
       source: 'AMAP', city: request.city, theme: request.theme, mode: request.mode,
+      ...(constraints.includeDistricts.length || constraints.excludeDistricts.length || constraints.excludeKeywords.length
+        || constraints.preferredArea ? { constraints } : {}),
       startMinute, endMinute, defaultStart: !request.startTime, defaultEnd: !request.endTime,
       status: 'incomplete', visits: [], route: null, timeline: [], finishMinute: null, overByMinutes: null, message: null,
     }
-    const pending = this.build(request, result, { ...execution, signal,
+    const pending = this.build(request, constraints, result, { ...execution, signal,
       deferContext: context => execution.deferContext?.(context), concludeTurn: () => execution.concludeTurn?.(),
     })
     this.pending.add(pending)
@@ -103,47 +126,127 @@ export default class ItineraryPlanner extends ItineraryPlannerService {
     return { reference: { ...ref, expectedId: saved.id }, placeId: saved.placeId }
   }
 
-  private async build(query: DayItineraryQuery, result: DayItineraryResult, execution: QueryExecution): Promise<DayItineraryResult> {
+  private async build(query: DayItineraryQuery, constraints: ItineraryConstraints, result: DayItineraryResult,
+    execution: QueryExecution): Promise<DayItineraryResult> {
     const { signal } = execution
     const origin = await this.resolveEndpoint(query.origin)
     signal.throwIfAborted()
     const destination = query.returnToOrigin ? origin : await this.resolveEndpoint(query.destination)
     const excluded = new Set([origin?.placeId, destination?.placeId])
     const seen = new Set<string>()
-    const theme = themes[query.theme]
-    for (const keywords of theme.keywords) {
+    const verified = new Map<string, PlaceDetailsResult>()
+    const candidates: { place: Place; visit: ItineraryVisit }[] = []
+    const theme = Object.hasOwn(themes, query.theme) ? themes[query.theme as keyof typeof themes] : undefined
+    const terms = [...new Set(query.themeKeywords ?? theme?.keywords ?? [query.theme])]
+    const matches = (value: string) => terms.find(term => matchText(value).includes(matchText(term)))
+      ?? theme?.match.exec(value)?.[0]
+    const { includeDistricts, excludeDistricts, excludeKeywords, preferredArea } = constraints
+    const strictRegion = includeDistricts.length > 0 || excludeDistricts.length > 0
+    const wrongCity = (city: string | null) => city !== null && cityKey(city) !== cityKey(query.city)
+    const wrongDistrict = (district?: string) => {
+      if (!district) return false
+      const name = district.normalize('NFKC')
+      return excludeDistricts.includes(name) || (includeDistricts.length > 0 && !includeDistricts.includes(name))
+    }
+    const rejectPlace = (place: Place) => ancillary.test(place.name)
+      || excludeKeywords.some(term => [place.name, place.category ?? ''].some(value => matchText(value).includes(matchText(term))))
+    const keywords = includeDistricts.length === 1 ? [includeDistricts[0] + ' ' + terms[0], terms[1] ?? terms[0]] : terms
+    let outside = 0
+    let unverified = 0
+    let budgetMessage: string | null = null
+    let lookupLimited = false
+    let lookups = 0
+    const lookupExecution = { ...execution, beforePlaceLookup: () => {
+      if (lookups >= 4) throw new HarnessError('已达到本次行程的地点核验上限。', 'TRIP_ITINERARY_LOOKUP_BUDGET')
+      execution.beforePlaceLookup?.()
+      lookups++
+    } }
+    const enough = () => preferredArea
+      ? candidates.filter(candidate => preferred(candidate.place, preferredArea)).length >= 2
+      : candidates.length >= 2
+    const shortlist = () => [...candidates].sort((a, b) =>
+      Number(preferred(b.place, preferredArea)) - Number(preferred(a.place, preferredArea))).slice(0, 2).map(candidate => candidate.visit)
+    for (const keyword of keywords) {
       signal.throwIfAborted()
+      let places: Place[]
       try {
-        const search = await this.ctx.travelData.searchPlaces({ keywords, city: query.city }, execution)
+        const search = await this.ctx.travelData.searchPlaces({ keywords: keyword, city: query.city }, execution)
+        places = search.places
         signal.throwIfAborted()
-        for (const place of search.places) {
-          const matched = theme.match.exec(place.name)?.[0]
-          const identity = place.name.normalize('NFKC').trim() + '\0' + (place.address ?? '').normalize('NFKC').trim()
-          if (!matched || ancillary.test(place.name) || excluded.has(place.id) || seen.has(identity)
-            || (place.city && cityKey(place.city) !== cityKey(query.city))) continue
-          result.visits.push({ placeId: place.id, name: place.name, address: place.address,
-            reason: '名称匹配' + matched, stayMinutes: query.stayMinutes ?? theme.stay })
-          excluded.add(place.id)
-          seen.add(identity)
-          if (result.visits.length === 2) break
-        }
       } catch (error) {
         signal.throwIfAborted()
-        return { ...result, message: queryMessage(error, '地点搜索未完成，可以稍后重新规划。') }
+        if (!preferredArea || candidates.length < 2) {
+          return { ...result, visits: shortlist(), message: queryMessage(error, '地点搜索未完成，可以稍后重新规划。') }
+        }
+        queryMessage(error, '地点搜索未完成。')
+        break
       }
-      if (result.visits.length === 2) break
+      // 优先核验已有主题依据的候选，把详情额度留给更相关的地点。
+      const ordered = [...places].sort((a, b) => Number(!!textEvidence(b, matches)) - Number(!!textEvidence(a, matches)))
+      for (let place of ordered) {
+        signal.throwIfAborted()
+        if (excluded.has(place.id) || rejectPlace(place)) continue
+        excluded.add(place.id)
+        if (wrongCity(place.city) || wrongDistrict(place.district)) { outside++; continue }
+        const reason = textEvidence(place, matches)
+        if (!reason && (place.category || (theme && !query.themeKeywords))) continue
+        let details: PlaceDetailsResult | undefined
+        try {
+          if (strictRegion || !reason || (excludeKeywords.length && !place.category) || (preferredArea && !preferred(place, preferredArea))) {
+            details = await this.ctx.travelData.getPlaceDetails(place.id, lookupExecution)
+            const resolved = details.place
+            place = { ...place, ...resolved, city: resolved.city ?? place.city, address: resolved.address ?? place.address }
+            if (rejectPlace(place) || !textEvidence(place, matches)) continue
+            if (wrongCity(place.city) || wrongDistrict(place.district)) { outside++; continue }
+            if (strictRegion && (!place.district || !place.city) && resolved.coordinates) {
+              const region = await this.ctx.travelData.getPlaceRegion(resolved.coordinates, lookupExecution)
+              place = { ...place, city: region.city ?? place.city, district: region.district ?? place.district }
+            }
+          }
+        } catch (error) {
+          signal.throwIfAborted()
+          if (error instanceof HarnessError && error.code === 'TRIP_AGENT_QUERY_BUDGET') {
+            budgetMessage = error.message
+            break
+          }
+          if (error instanceof HarnessError && error.code === 'TRIP_ITINERARY_LOOKUP_BUDGET') lookupLimited = true
+          queryMessage(error, '地点信息未能核验。')
+          if (strictRegion || !reason || excludeKeywords.length) { unverified++; continue }
+        }
+        if (wrongCity(place.city) || wrongDistrict(place.district)) { outside++; continue }
+        if (strictRegion && (!place.city || !place.district || !place.coordinates)) { unverified++; continue }
+        const matched = textEvidence(place, matches)
+        if (!matched) continue
+        const identity = matchText(place.name) + '\0' + matchText(place.address ?? '') + '\0' + (place.district ?? '')
+        if (seen.has(identity)) continue
+        seen.add(identity)
+        if (details?.place.coordinates) verified.set(place.id, { ...details, place })
+        candidates.push({ place, visit: { placeId: place.id, name: place.name, address: place.address, reason: matched,
+          stayMinutes: query.stayMinutes ?? theme?.stay ?? 60, ...(place.district && { district: place.district }) } })
+        if (enough()) break
+      }
+      if (enough() || budgetMessage) break
     }
-    if (result.visits.length < 2) return { ...result, status: 'insufficient-places',
-      message: '已找到 ' + result.visits.length + ' 个符合条件的地点。可放宽主题或换一个城市。' }
+    result.visits = shortlist()
+    if (result.visits.length < 2) {
+      const notes = [
+        outside > 0 && outside + ' 个候选不在指定地区。',
+        unverified > 0 && unverified + ' 个候选的必要信息未能核验。',
+        lookupLimited && '已达到本次行程的地点核验上限。',
+        budgetMessage,
+      ].filter(Boolean).join('')
+      return { ...result, status: 'insufficient-places',
+        message: '已确认 ' + result.visits.length + ' 个符合条件的地点。' + notes + '可以调整主题或地区后再规划。' }
+    }
 
     const stops: EndpointReference[] = result.visits.map(place => ({ kind: 'poi', placeId: place.placeId }))
     if (origin) stops.unshift(origin.reference)
     if (destination) stops.push(destination.reference)
     try {
       const route = stops.length === 2
-        ? await this.ctx.routePlanner.plan({ origin: stops[0], destination: stops[1], mode: query.mode }, execution)
+        ? await this.ctx.routePlanner.plan({ origin: stops[0], destination: stops[1], mode: query.mode }, execution, verified)
         : await this.ctx.routePlanner.planMultiStop({ stops, mode: query.mode, order: 'optimized',
-          pinStart: !!origin, pinEnd: !!destination }, execution)
+          pinStart: !!origin, pinEnd: !!destination }, execution, verified)
       signal.throwIfAborted()
       const { timeline, finishMinute } = schedule(route, result.visits, result.startMinute)
       const overByMinutes = finishMinute === null ? null : Math.max(0, finishMinute - result.endMinute)

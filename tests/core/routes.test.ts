@@ -9,7 +9,7 @@ import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import Tools, { defineTool, type ToolExecution, type ToolExecutionResult, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import * as Native from '@deepseek-ai/dsh-tool-executor-native'
-import { AMAP_DETAILS_TOOL, AMAP_ROUTE_TOOLS, AMAP_SEARCH_TOOL } from '../../src/adapters/amap-mcp.ts'
+import { AMAP_DETAILS_TOOL, AMAP_REGION_TOOL, AMAP_ROUTE_TOOLS, AMAP_SEARCH_TOOL } from '../../src/adapters/amap-mcp.ts'
 import { normalizeRoutePayload } from '../../src/adapters/amap-routes.ts'
 import type { Config } from '../../src/config.ts'
 import type { DayItineraryResult } from '../../src/contracts/day-itinerary.ts'
@@ -32,6 +32,7 @@ type RouteArgs = { origin: string; destination: string; city?: string; cityd?: s
 async function mount(options: {
   records?: SavedPlace[]; config?: Partial<Config>; registerRoutes?: boolean
   detail?: (id: string, execution: ToolRunContext) => Promise<unknown>
+  region?: (location: string) => unknown
   search?: (keywords: string) => unknown
   route?: (mode: RouteMode, args: RouteArgs, execution: ToolRunContext) => Promise<unknown>
 } = {}) {
@@ -63,6 +64,15 @@ async function mount(options: {
         calls.push({ name: AMAP_DETAILS_TOOL, args })
         return raw(options.detail ? await options.detail(args.id, execution) : { id: args.id, name: '测试地点' + args.id,
           address: '新详情地址', city: '广州市', location: args.id === 'poi1' ? '113,23' : '113.1,23' })
+      },
+    }))
+    if (options.region) ctx.tools.register(defineTool({
+      name: AMAP_REGION_TOOL, description: '测试行政区核验',
+      parameters: { location: { type: 'string', required: true } },
+      output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '测试行政区核验' }] },
+      async execute(args) {
+        calls.push({ name: AMAP_REGION_TOOL, args })
+        return raw(options.region?.(args.location))
       },
     }))
     if (options.registerRoutes !== false) for (const mode of routeModes) ctx.tools.register(defineTool({
@@ -135,6 +145,86 @@ test('单日行程保留返程、用户停留时长和结束限制，超时给�
     assert.ok(value.route && 'stops' in value.route)
     assert.equal(value.route.stops[0].placeId, value.route.stops.at(-1)?.placeId)
     assert.equal(fixture.calls.filter(call => call.name === AMAP_ROUTE_TOOLS.transit).length, 3)
+  } finally { await fixture.close() }
+})
+
+test('自然语言主题按高德类型核验，过滤行政区与排除词，路线复用已查详情', async () => {
+  const first = { ...museumA, name: '测试科普中心', district: '天河区', type: '展览馆;铁路博物馆' }
+  const second = { ...museumB, name: '测试工业遗产馆' }
+  const fixture = await mount({
+    search: () => ({ pois: [
+      { ...first, id: 'excluded-mall', name: '工业遗产商场' },
+      { ...first, id: 'other-district', district: '荔湾区' }, first, second,
+    ] }),
+    detail: async id => [first, second].find(place => place.id === id),
+    region: () => ({ country: '中国', province: '广东省', city: '广州市', district: '越秀区' }),
+  })
+  try {
+    const output = await runDay(fixture.ctx, { ...dayQuery, theme: '工业遗产与铁路展馆',
+      themeKeywords: ['工业遗产', '铁路博物馆'], includeDistricts: ['天河区', '越秀区'],
+      excludeDistricts: ['荔湾区'], excludeKeywords: ['商场'] })
+    const value = itinerary(output)
+    assert.equal(value.status, 'ready')
+    assert.deepEqual(value.visits.map(visit => [visit.placeId, visit.district, visit.reason]), [
+      [first.id, '天河区', '类型匹配铁路博物馆'], [second.id, '越秀区', '名称匹配工业遗产'],
+    ])
+    assert.match(JSON.stringify(output.content), /游览区县 天河区、越秀区/)
+    assert.deepEqual(fixture.calls.map(call => call.name), [
+      AMAP_SEARCH_TOOL, AMAP_DETAILS_TOOL, AMAP_DETAILS_TOOL, AMAP_REGION_TOOL, AMAP_ROUTE_TOOLS.walking,
+    ])
+  } finally { await fixture.close() }
+})
+
+test('严格排除区县时拒绝同名异地与归属未知的候选，候选不足不查路线', async () => {
+  const fixture = await mount({
+    search: () => ({ pois: [
+      { ...museumA, city: '佛山市', district: '天河区' }, museumB,
+      { ...museumA, id: 'outside', city: '广州市', district: '荔湾区' },
+    ] }),
+    detail: museumDetail,
+    region: () => ({ province: '广东省', city: '广州市', district: '' }),
+  })
+  try {
+    const conflict = await runDay(fixture.ctx, { ...dayQuery, includeDistricts: ['天河区'], excludeDistricts: ['天河区'] })
+    assert.equal(conflict.isError, true)
+    assert.equal(fixture.calls.length, 0)
+    const value = itinerary(await runDay(fixture.ctx, { ...dayQuery, excludeDistricts: ['荔湾区'] }))
+    assert.equal(value.status, 'insufficient-places')
+    assert.equal(value.route, null)
+    assert.match(value.message ?? '', /2 个候选不在指定地区.*1 个候选的必要信息未能核验/u)
+    assert.deepEqual(fixture.calls.map(call => call.name), [
+      AMAP_SEARCH_TOOL, AMAP_DETAILS_TOOL, AMAP_REGION_TOOL, AMAP_SEARCH_TOOL,
+    ])
+  } finally { await fixture.close() }
+})
+
+test('行政区核验最多四次实际请求，缓存命中和补搜不重复消耗额度', async () => {
+  const places = Array.from({ length: 5 }, (_, index) => ({ ...museumA, id: 'test-' + index, location: (113 + index / 100) + ',23' }))
+  const fixture = await mount({ config: { cacheEnabled: true },
+    search: () => ({ pois: places }), detail: async id => places.find(place => place.id === id),
+    region: () => ({ city: '广州市', district: null }),
+  })
+  try {
+    for (let index = 0; index < 2; index++) {
+      fixture.calls.length = 0
+      const value = itinerary(await runDay(fixture.ctx, { ...dayQuery, includeDistricts: ['天河区'] }))
+      assert.equal(value.status, 'insufficient-places')
+      assert.equal(value.route, null)
+      assert.equal(fixture.calls.filter(call => [AMAP_REGION_TOOL, AMAP_DETAILS_TOOL].includes(call.name)).length, 4)
+      assert.equal(fixture.calls.filter(call => call.name === AMAP_SEARCH_TOOL).length, index === 0 ? 2 : 0)
+    }
+  } finally { await fixture.close() }
+})
+
+test('商圈偏好优先排序，保留其他符合主题的地点作补充', async () => {
+  const preferred = { ...museumB, business_area: '珠江新城' }
+  const fixture = await mount({ search: () => ({ pois: [museumA, preferred] }),
+    detail: async id => [museumA, preferred].find(place => place.id === id),
+  })
+  try {
+    const value = itinerary(await runDay(fixture.ctx, { ...dayQuery, preferredArea: '珠江新城' }))
+    assert.equal(value.status, 'ready')
+    assert.deepEqual(value.visits.map(visit => visit.placeId), [museumB.id, museumA.id])
   } finally { await fixture.close() }
 })
 

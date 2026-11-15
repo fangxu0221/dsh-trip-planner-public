@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { HarnessError, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { ToolExecutionPipeline } from '@deepseek-ai/dsh-tools/pipeline'
-import type { Coordinates, Place, PlaceDetailsResult, PlacesSearchResult, ResolvedSearchPlacesQuery } from '../contracts/travel.ts'
+import type { Coordinates, Place, PlaceDetailsResult, PlaceRegion, PlacesSearchResult, ResolvedSearchPlacesQuery } from '../contracts/travel.ts'
 import type { QueryExecution } from '../services/travel-data.ts'
 import type { ResolvedRouteQuery, RouteDataResult, RouteMode } from '../contracts/routes.ts'
 import { normalizeRoutePayload } from './amap-routes.ts'
@@ -17,6 +17,7 @@ interface CachePlan { request: CacheRequest; refresh: boolean; validate: (value:
 /** 固定为已验证的只读搜索工具，不允许模型指定任意内部工具名。 */
 export const AMAP_SEARCH_TOOL = 'mcp__amap__maps_text_search'
 export const AMAP_DETAILS_TOOL = 'mcp__amap__maps_search_detail'
+export const AMAP_REGION_TOOL = 'mcp__amap__maps_regeocode'
 /** 只允许固定四种只读路线能力，不接受模型提供内部工具名。 */
 export const AMAP_ROUTE_TOOLS: Record<RouteMode, string> = {
   walking: 'mcp__amap__maps_direction_walking', bicycling: 'mcp__amap__maps_direction_bicycling',
@@ -36,6 +37,28 @@ function optionalText(value: unknown): string | null {
   if (value === undefined || value === null || value === '') return null
   if (typeof value !== 'string') return formatError()
   return value.trim() || null
+}
+
+function areaText(value: unknown): string | undefined {
+  return typeof value === 'string' ? value.trim() || undefined : undefined
+}
+
+function placeMetadata(item: Record<string, unknown>): Partial<Pick<Place, 'district' | 'category' | 'businessArea'>> {
+  const district = areaText(item.district) ?? areaText(item.adname)
+  const category = areaText(item.type)
+  const businessArea = areaText(item.business_area)
+  return { ...(district && { district }), ...(category && { category }), ...(businessArea && { businessArea }) }
+}
+
+export function normalizePlaceRegion(value: unknown): PlaceRegion {
+  const result = payload(value)
+  const body = result.regeocode === undefined ? result : record(result.regeocode)
+  const area = body.addressComponent === undefined ? body : record(body.addressComponent)
+  if (!['city', 'province', 'district'].some(field => field in area)) return formatError()
+  const province = areaText(area.province)
+  // 直辖市上游可能只返回省级字段，其他省份不能充当城市。
+  const municipality = province && /^(北京|上海|天津|重庆)市?$/u.test(province) ? province : null
+  return { city: areaText(area.city) ?? municipality, district: areaText(area.district) ?? null }
 }
 
 function coordinates(value: unknown): Coordinates | null {
@@ -81,7 +104,7 @@ export function normalizeSearchResult(value: unknown, query: ResolvedSearchPlace
     const item = record(value)
     if (typeof item.id !== 'string' || !item.id.trim() || typeof item.name !== 'string' || !item.name.trim()) return formatError()
     const place: Place = { id: item.id.trim(), name: item.name.trim(), address: optionalText(item.address),
-      city: optionalText(item.cityname ?? item.city), coordinates: coordinates(item.location) }
+      city: optionalText(item.cityname ?? item.city), coordinates: coordinates(item.location), ...placeMetadata(item) }
     if (!places.has(place.id)) places.set(place.id, place)
   }
   const selected = [...places.values()].slice(0, query.limit)
@@ -103,7 +126,7 @@ export function normalizePlaceDetails(value: unknown, placeId: string, fetchedAt
   if (item.id !== placeId || typeof item.name !== 'string' || !item.name.trim()) return formatError()
   return { source: 'AMAP', fetchedAt, place: {
     id: placeId, name: item.name.trim(), address: optionalText(item.address),
-    city: optionalText(item.cityname ?? item.city), coordinates: coordinates(item.location),
+    city: optionalText(item.cityname ?? item.city), coordinates: coordinates(item.location), ...placeMetadata(item),
   } }
 }
 
@@ -137,6 +160,16 @@ export class AmapMcpAdapter {
     const { value, fetchedAt } = await this.invoke(AMAP_DETAILS_TOOL, { id: placeId }, execution, signal,
       { request: { kind: 'details', placeId }, refresh, validate: (value, at) => [normalizePlaceDetails(value, placeId, at).place] })
     return normalizePlaceDetails(value, placeId, fetchedAt)
+  }
+
+  async getPlaceRegion(point: Coordinates, execution: QueryExecution, signal: AbortSignal): Promise<PlaceRegion> {
+    const location = point.longitude + ',' + point.latitude
+    const { value } = await this.invoke(AMAP_REGION_TOOL, { location }, execution, signal,
+      { request: { kind: 'region', coordinates: point }, refresh: false, validate: response => {
+        normalizePlaceRegion(response)
+        return []
+      } })
+    return normalizePlaceRegion(value)
   }
 
   /** 同一调用只选择一种路线方式，公交城市取端点真实字段。 */
@@ -174,10 +207,12 @@ export class AmapMcpAdapter {
       return { ...original, execute: async (parameters, inner) => {
         const call = async (active: AbortSignal) => {
           active.throwIfAborted()
-          this.ctx.placeQueryPolicy?.consume(inner.agent, plan?.request.kind ?? 'route')
+          const kind = plan?.request.kind === 'region' ? 'details' : plan?.request.kind ?? 'route'
+          if (kind === 'details') execution.beforePlaceLookup?.()
+          this.ctx.placeQueryPolicy?.consume(inner.agent, kind)
           const contexts: CachedQuery['contexts'] = []
           let concludesTurn = false
-          cache?.recordCall(plan?.request.kind ?? 'route')
+          cache?.recordCall(kind)
           const response = await original.execute(parameters, { ...inner, signal: active,
             deferContext: context => { contexts.push(context) }, concludeTurn() { concludesTurn = true } })
           const at = new Date().toISOString()
@@ -215,8 +250,9 @@ export class AmapMcpAdapter {
       if (result.isError) {
         const message = result.error.message.replace(/[a-f0-9]{32}/gi, '[REDACTED]')
           .replace(/([?&](?:key|token|secret)=)[^&\s"'<>]+/gi, '$1[REDACTED]')
-        if (result.error.info?.code === 'TRIP_AGENT_QUERY_BUDGET') {
-          throw new HarnessError(message, 'TRIP_AGENT_QUERY_BUDGET')
+        const code = result.error.info?.code
+        if (code === 'TRIP_AGENT_QUERY_BUDGET' || code === 'TRIP_ITINERARY_LOOKUP_BUDGET') {
+          throw new HarnessError(message, code)
         }
         throw new HarnessError('高德查询调用失败：' + message, 'TRIP_UPSTREAM_ERROR')
       }

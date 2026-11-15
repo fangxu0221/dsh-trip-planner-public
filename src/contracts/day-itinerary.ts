@@ -5,10 +5,17 @@ import { endpointReferenceSchema, routeModes, type PlanMultiStopRouteResult, typ
 export const itineraryThemes = ['culture', 'park', 'landmark'] as const
 export type ItineraryTheme = typeof itineraryThemes[number]
 const time = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/u)
+const label = z.string().normalize('NFKC').trim().min(1).max(40)
+const district = label.regex(/(?:区|县|旗|市)$/u)
 
 export const dayItineraryQuerySchema = z.object({
   city: z.string().trim().min(1).max(50),
-  theme: z.enum(itineraryThemes),
+  theme: z.string().normalize('NFKC').trim().min(1).max(80),
+  themeKeywords: z.array(label).min(1).max(2).optional(),
+  excludeKeywords: z.array(label).max(5).optional(),
+  includeDistricts: z.array(district).max(3).optional(),
+  excludeDistricts: z.array(district).max(3).optional(),
+  preferredArea: label.optional(),
   mode: z.enum(routeModes),
   startTime: time.optional(),
   endTime: time.optional(),
@@ -19,12 +26,20 @@ export const dayItineraryQuerySchema = z.object({
 }).strict()
 export type DayItineraryQuery = z.infer<typeof dayItineraryQuerySchema>
 
+export interface ItineraryConstraints {
+  includeDistricts: string[]
+  excludeDistricts: string[]
+  excludeKeywords: string[]
+  preferredArea: string | null
+}
+
 export interface ItineraryVisit {
   placeId: string
   name: string
   address: string | null
   reason: string
   stayMinutes: number
+  district?: string
 }
 
 export interface ItineraryItem {
@@ -40,7 +55,8 @@ export interface ItineraryItem {
 export interface DayItineraryResult {
   source: 'AMAP'
   city: string
-  theme: ItineraryTheme
+  theme: string
+  constraints?: ItineraryConstraints
   mode: RouteMode
   status: 'ready' | 'over-window' | 'incomplete' | 'insufficient-places'
   startMinute: number

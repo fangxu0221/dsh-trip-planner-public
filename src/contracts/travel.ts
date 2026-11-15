@@ -21,6 +21,12 @@ export interface Coordinates {
   latitude: number
 }
 
+/** 行政区划取自高德结构化字段，缺失时保留未知。 */
+export interface PlaceRegion {
+  city: string | null
+  district: string | null
+}
+
 /** 缺失的地址、城市或坐标使用 null，不从搜索条件或模型推测补齐。 */
 export interface Place {
   id: string
@@ -28,6 +34,9 @@ export interface Place {
   address: string | null
   city: string | null
   coordinates: Coordinates | null
+  district?: string
+  category?: string
+  businessArea?: string
 }
 
 /** sourceCount 是本次上游返回数，truncated 只表示本地数量限制，不代表完整搜索覆盖率。 */

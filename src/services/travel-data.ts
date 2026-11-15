@@ -1,7 +1,7 @@
 /** 角色一：服务约定。提供方实现方法，工具消费方通过 ctx.travelData 使用能力。 */
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
-import type { PlaceDetailsResult, PlacesSearchResult, SearchPlacesQuery } from '../contracts/travel.ts'
+import type { Coordinates, PlaceDetailsResult, PlaceRegion, PlacesSearchResult, SearchPlacesQuery } from '../contracts/travel.ts'
 import type { ResolvedRouteQuery, RouteDataResult } from '../contracts/routes.ts'
 
 /**
@@ -9,7 +9,10 @@ import type { ResolvedRouteQuery, RouteDataResult } from '../contracts/routes.ts
  * 后续后台消费方可只提供 signal，不需要构造假的 Agent。
  */
 export type QueryExecution = Pick<ToolRunContext, 'signal'> & Partial<Pick<ToolRunContext,
-  'agent' | 'toolSet' | 'token' | 'rootCallId' | 'deferContext' | 'concludeTurn'>>
+  'agent' | 'toolSet' | 'token' | 'rootCallId' | 'deferContext' | 'concludeTurn'>> & {
+  /** 只在详情或逆地理编码实际发起前检查，缓存命中沿用已有结果。 */
+  beforePlaceLookup?: () => void
+}
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -33,6 +36,9 @@ export default abstract class TravelDataService extends Service {
 
   /** 按已选择的真实 POI ID 获取详情，供收藏使用，不接受模型自行拼出的地点字段。 */
   abstract getPlaceDetails(placeId: string, execution: QueryExecution, options?: { refresh?: boolean }): Promise<PlaceDetailsResult>
+
+  /** 根据来源坐标核验城市和区县。 */
+  abstract getPlaceRegion(coordinates: Coordinates, execution: QueryExecution): Promise<PlaceRegion>
 
   /** 查询已解析端点之间的一种交通方式；不负责收藏别名解析。 */
   abstract planRoute(query: ResolvedRouteQuery, execution: QueryExecution): Promise<RouteDataResult>

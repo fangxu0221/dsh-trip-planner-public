@@ -45,22 +45,22 @@ export default class RoutePlanner extends RoutePlannerService {
     })
   }
 
-  override async plan(query: PlanRouteQuery, execution: QueryExecution): Promise<PlanRouteResult> {
+  override async plan(query: PlanRouteQuery, execution: QueryExecution, verified?: ReadonlyMap<string, PlaceDetailsResult>): Promise<PlanRouteResult> {
     const parsed = planRouteQuerySchema.safeParse(query)
     if (!parsed.success) throw new HarnessError('路线参数不合法：起终点必须是收藏别名或地点 ID，且需指定支持的交通方式。', 'TRIP_INVALID_ROUTE_QUERY')
     const { mode } = parsed.data
     return this.run(execution, async active => {
-      const [origin, destination] = await this.resolveStops([parsed.data.origin, parsed.data.destination], mode, active)
+      const [origin, destination] = await this.resolveStops([parsed.data.origin, parsed.data.destination], mode, active, undefined, verified)
       const result = await this.ctx.travelData.planRoute({ origin, destination, mode }, active)
       active.signal.throwIfAborted()
       return { ...result, origin, destination, mode }
     })
   }
 
-  override async planMultiStop(query: PlanMultiStopRouteQuery, execution: QueryExecution): Promise<PlanMultiStopRouteResult> {
+  override async planMultiStop(query: PlanMultiStopRouteQuery, execution: QueryExecution, verified?: ReadonlyMap<string, PlaceDetailsResult>): Promise<PlanMultiStopRouteResult> {
     const parsed = planMultiStopRouteQuerySchema.safeParse(query)
     if (!parsed.success) throw new HarnessError('请提供 3—' + maxMultiStopPlaces + ' 个已选地点并指定交通方式。自动顺路时还需标明是否固定首尾地点。', 'TRIP_INVALID_ROUTE_QUERY')
-    return this.run(execution, active => this.planLegs(parsed.data, active))
+    return this.run(execution, active => this.planLegs(parsed.data, active, verified))
   }
 
   private async run<T>(execution: QueryExecution, execute: (active: QueryExecution) => Promise<T>): Promise<T> {
@@ -85,7 +85,7 @@ export default class RoutePlanner extends RoutePlannerService {
   }
 
   private async resolveStops(references: EndpointReference[], mode: RouteMode, execution: QueryExecution,
-    pins?: PinnedStops): Promise<RouteEndpoint[]> {
+    pins?: PinnedStops, verified?: ReadonlyMap<string, PlaceDetailsResult>): Promise<RouteEndpoint[]> {
     // 在详情补查前校验本地引用及重复地点。
     const { signal } = execution
     const selected: SelectedEndpoint[] = []
@@ -104,7 +104,7 @@ export default class RoutePlanner extends RoutePlannerService {
       selected.push(point)
       if (point.saved?.coordinates && (mode !== 'transit' || point.saved.city?.trim())) saved.set(point.placeId, point.saved)
     }
-    const details = new Map<string, PlaceDetailsResult>()
+    const details = new Map(verified)
     const stops: RouteEndpoint[] = []
     for (const point of selected) {
       signal.throwIfAborted()
@@ -144,12 +144,12 @@ export default class RoutePlanner extends RoutePlannerService {
     return stops
   }
 
-  private async planLegs(query: PlanMultiStopRouteQuery, execution: QueryExecution): Promise<PlanMultiStopRouteResult> {
+  private async planLegs(query: PlanMultiStopRouteQuery, execution: QueryExecution, verified?: ReadonlyMap<string, PlaceDetailsResult>): Promise<PlanMultiStopRouteResult> {
     const { signal } = execution
     const { mode } = query
     const order = query.order ?? 'given'
     const pins = order === 'optimized' ? { pinStart: query.pinStart === true, pinEnd: query.pinEnd === true } : undefined
-    const resolved = await this.resolveStops(query.stops, mode, execution, pins)
+    const resolved = await this.resolveStops(query.stops, mode, execution, pins, verified)
     signal.throwIfAborted()
     const stops = pins ? optimizeRouteOrder(resolved, pins) : resolved
     if (!stops) throw new HarnessError('有地点坐标重合，无法排出相邻地点坐标不同的顺路路线，请调整地点。', 'TRIP_SAME_ENDPOINT')

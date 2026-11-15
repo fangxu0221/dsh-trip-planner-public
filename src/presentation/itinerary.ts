@@ -1,7 +1,22 @@
 /** 对话和右栏共用单日行程的主题名与时刻格式。 */
-import type { DayItineraryResult, ItineraryTheme } from '../contracts/day-itinerary.ts'
+import type { DayItineraryResult, ItineraryConstraints, ItineraryTheme } from '../contracts/day-itinerary.ts'
 
 export const themeLabels = { culture: '文化展馆', park: '公园休闲', landmark: '城市地标' } satisfies Record<ItineraryTheme, string>
+
+export function itineraryThemeLabel(theme: string): string {
+  return Object.hasOwn(themeLabels, theme) ? themeLabels[theme as ItineraryTheme] : theme
+}
+
+export function itineraryConstraintLabels(constraints?: ItineraryConstraints): string[] {
+  if (!constraints) return []
+  const { includeDistricts, excludeDistricts, excludeKeywords, preferredArea } = constraints
+  return [
+    includeDistricts.length && '游览区县 ' + includeDistricts.join('、'),
+    excludeDistricts.length && '避开区县 ' + excludeDistricts.join('、'),
+    excludeKeywords.length && '排除地点 ' + excludeKeywords.join('、'),
+    preferredArea && '优先地区 ' + preferredArea,
+  ].filter((label): label is string => typeof label === 'string' && label.length > 0)
+}
 
 export function itineraryTime(minute: number | null): string {
   if (minute === null) return '待定'

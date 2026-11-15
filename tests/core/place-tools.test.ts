@@ -8,7 +8,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import Tools, { defineTool, type ToolExecution, type ToolExecutionInput, type ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import { ToolExecutionPipeline } from '@deepseek-ai/dsh-tools/pipeline'
 import * as Native from '@deepseek-ai/dsh-tool-executor-native'
-import { AMAP_DETAILS_TOOL, AMAP_ROUTE_TOOLS, AMAP_SEARCH_TOOL } from '../../src/adapters/amap-mcp.ts'
+import { AMAP_DETAILS_TOOL, AMAP_REGION_TOOL, AMAP_ROUTE_TOOLS, AMAP_SEARCH_TOOL } from '../../src/adapters/amap-mcp.ts'
 import type { Config } from '../../src/config.ts'
 import type { PlacesSearchResult, PlaceDetailsResult } from '../../src/contracts/travel.ts'
 import * as trip from '../../src/index.ts'
@@ -37,6 +37,10 @@ async function mount(config: Partial<Config> = {}) {
   ctx.tools.register(defineTool({ name: AMAP_DETAILS_TOOL, description: '模拟详情', parameters: { id: text },
     output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '模拟详情' }] },
     async execute(args) { calls.details++; return raw(place(args.id)) },
+  }))
+  ctx.tools.register(defineTool({ name: AMAP_REGION_TOOL, description: '模拟行政区', parameters: { location: text },
+    output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '模拟行政区' }] },
+    async execute() { calls.details++; return raw({ country: '中国', city: '广州市', district: '天河区' }) },
   }))
   ctx.tools.register(defineTool({ name: AMAP_ROUTE_TOOLS.walking, description: '模拟步行', parameters: { origin: text, destination: text },
     output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '模拟步行' }] },
@@ -127,6 +131,7 @@ test('Agent 直接调用底层能力及伪造父调用或名称前缀都不能�
       for (const [name, args, target] of [
         [AMAP_SEARCH_TOOL, { keywords: '景点', city: '广州', citylimit: true }, 'trip_search_places'],
         [AMAP_DETAILS_TOOL, { id: 'p1' }, 'trip_get_place_details'],
+        [AMAP_REGION_TOOL, { location: '113,23' }, 'trip_plan_day_itinerary'],
         [AMAP_ROUTE_TOOLS.walking, { origin: '113,23', destination: '114,23' }, 'trip_plan_route'],
       ] as const) {
         const response = await invoke(ctx, name, args, owner, parent, ToolCallId('trip-amap-' + randomUUID()))
@@ -137,6 +142,24 @@ test('Agent 直接调用底层能力及伪造父调用或名称前缀都不能�
     assert.deepEqual(calls, { search: 0, details: 0, route: 0 })
     assert.equal((await invoke(ctx, 'trip_get_place_details', { placeId: 'p1' }, owner)).isError, false)
     assert.equal(calls.details, 1)
+  } finally { await ctx.fiber.dispose() }
+})
+
+test('行程的详情与逆地理编码共用 Agent 详情预算，额度不足不查路线', async () => {
+  const { ctx, calls } = await mount({ agentMaxDetailCallsPerTurn: 2 })
+  const owner = agent('district-budget')
+  try {
+    const args = { city: '广州', theme: '测试地点', includeDistricts: ['天河区'], mode: 'walking' }
+    await step(ctx, owner, 1)
+    const first = await invoke(ctx, 'trip_plan_day_itinerary', args, owner)
+    assert.equal(first.isError, false)
+    assert.match(JSON.stringify(first.content), /实际高德调用已达到 2 次上限/u)
+    assert.deepEqual(calls, { search: 1, details: 2, route: 0 })
+    await step(ctx, owner, 2)
+    const second = await invoke(ctx, 'trip_plan_day_itinerary', args, owner)
+    assert.equal(second.isError, false)
+    assert.match(JSON.stringify(second.content), /预计结束/u)
+    assert.deepEqual(calls, { search: 1, details: 4, route: 1 })
   } finally { await ctx.fiber.dispose() }
 })
 

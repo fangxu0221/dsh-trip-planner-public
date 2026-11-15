@@ -1,6 +1,6 @@
 /** 单日行程用时间表串起游览和交通，交通详情沿用普通路线的组件。 */
 import type { DayItineraryResult } from '../types.ts'
-import { itineraryLeg, itineraryTime, themeLabels } from '../../../../src/presentation/itinerary.ts'
+import { itineraryConstraintLabels, itineraryLeg, itineraryThemeLabel, itineraryTime } from '../../../../src/presentation/itinerary.ts'
 import { LineSequence, RouteSteps } from './RouteResults.tsx'
 import { modes } from './SavedRoutesList.tsx'
 import { TripGlyph } from './TripGlyph.tsx'
@@ -9,9 +9,10 @@ import { routeAlternatives } from './route-view.ts'
 export function DayItineraryResults({ result, onClear }: { result: DayItineraryResult; onClear: () => void }) {
   return <section className="trip-planner-itinerary trip-planner-routes" aria-label="单日行程">
     <div className="trip-planner-results-bar">
-      <h2>{result.city} · {themeLabels[result.theme]}</h2>
+      <h2>{result.city} · {itineraryThemeLabel(result.theme)}</h2>
       <button type="button" onClick={onClear}>清空行程</button>
     </div>
+    {itineraryConstraintLabels(result.constraints).map(label => <p key={label} className="trip-planner-muted">{label}</p>)}
     <p className="trip-planner-itinerary-window">
       {itineraryTime(result.startMinute)}{result.defaultStart && '（默认）'}–{itineraryTime(result.endMinute)}{result.defaultEnd && '（默认）'}
       <span className="trip-planner-mode" data-mode={result.mode}><TripGlyph name={result.mode} />{modes[result.mode]}</span>
@@ -34,12 +35,12 @@ export function DayItineraryResults({ result, onClear }: { result: DayItineraryR
         }
         return <li key={index} data-kind={item.kind}>
           {label}
-          {visit && <small>{visit.stayMinutes} 分钟 · {visit.reason}{visit.address && ' · ' + visit.address}</small>}
+          {visit && <small>{[visit.stayMinutes + ' 分钟', visit.district, visit.reason, visit.address].filter(Boolean).join(' · ')}</small>}
         </li>
       })}
     </ol> : result.visits.length > 0 && <ul className="trip-planner-timeline">
       {result.visits.map(visit => <li key={visit.placeId} data-kind="visit">
-        <strong>{visit.name}</strong><small>{visit.reason}{visit.address && ' · ' + visit.address}</small>
+        <strong>{visit.name}</strong><small>{[visit.district, visit.reason, visit.address].filter(Boolean).join(' · ')}</small>
       </li>)}
     </ul>}
     {result.visits.length > 0 && <p className="trip-planner-muted">营业时间、预约和门票待确认。</p>}

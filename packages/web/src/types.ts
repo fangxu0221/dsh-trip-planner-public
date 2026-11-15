@@ -22,6 +22,9 @@ interface Place {
   address: string | null
   city: string | null
   coordinates: Coordinates | null
+  district?: string
+  category?: string
+  businessArea?: string
 }
 
 export interface PlacesSearchResult {
@@ -141,17 +144,24 @@ export interface PlanMultiStopRouteResult {
 }
 export type RouteResult = PlanRouteResult | PlanMultiStopRouteResult
 
+/** 单日行程快照，字段与后端工具结果一致。 */
 export interface DayItineraryResult {
   source: 'AMAP'
   city: string
-  theme: 'culture' | 'park' | 'landmark'
+  theme: string
+  constraints?: {
+    includeDistricts: string[]
+    excludeDistricts: string[]
+    excludeKeywords: string[]
+    preferredArea: string | null
+  }
   mode: RouteMode
   status: 'ready' | 'over-window' | 'incomplete' | 'insufficient-places'
   startMinute: number
   endMinute: number
   defaultStart: boolean
   defaultEnd: boolean
-  visits: { placeId: string; name: string; address: string | null; reason: string; stayMinutes: number }[]
+  visits: { placeId: string; name: string; address: string | null; reason: string; stayMinutes: number; district?: string }[]
   route: RouteResult | null
   timeline: {
     kind: 'visit' | 'travel'; title: string; placeId?: string; startMinute: number | null; endMinute: number | null; legIndex: number | null

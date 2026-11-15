@@ -13,6 +13,7 @@ const nullableText = { oneOf: [{ type: 'string' }, { type: 'null' }] } as const
 export const placeOutputSchema = { type: 'object', additionalProperties: false, properties: {
   id: { type: 'string', required: true }, name: { type: 'string', required: true },
   address: { ...nullableText, required: true }, city: { ...nullableText, required: true },
+  district: { type: 'string' }, category: { type: 'string' }, businessArea: { type: 'string' },
   coordinates: { required: true, oneOf: [{ type: 'null' }, { type: 'object', additionalProperties: false, properties: {
     longitude: { type: 'number', required: true }, latitude: { type: 'number', required: true },
   } }] },

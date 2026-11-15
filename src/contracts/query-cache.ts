@@ -1,14 +1,20 @@
 /** 地点缓存约定：有效期不随读取延长，选择时间只用于候选排序。 */
 import { z } from 'zod'
 
+export const coordinatesSchema = z.object({
+  longitude: z.number().min(-180).max(180), latitude: z.number().min(-90).max(90),
+}).strict()
+
 const placeSchema = z.object({
   id: z.string().min(1), name: z.string().min(1), address: z.string().nullable(), city: z.string().nullable(),
-  coordinates: z.object({ longitude: z.number().min(-180).max(180), latitude: z.number().min(-90).max(90) }).strict().nullable(),
+  coordinates: coordinatesSchema.nullable(),
+  district: z.string().optional(), category: z.string().optional(), businessArea: z.string().optional(),
 }).strict()
 
 export const cacheRequestSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('search'), keywords: z.string().min(1).max(100), city: z.string().min(1).max(50), limit: z.number().int().min(1).max(10) }).strict(),
   z.object({ kind: z.literal('details'), placeId: z.string().min(1).max(100) }).strict(),
+  z.object({ kind: z.literal('region'), coordinates: coordinatesSchema }).strict(),
 ])
 export type CacheRequest = z.infer<typeof cacheRequestSchema>
 
