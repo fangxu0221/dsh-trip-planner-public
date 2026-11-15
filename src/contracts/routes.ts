@@ -98,6 +98,7 @@ export interface MultiStopLeg {
   fetchedAt: string | null
   warnings: string[]
   message: string | null
+  failureCode?: 'budget'
 }
 
 export interface PlanMultiStopRouteResult {

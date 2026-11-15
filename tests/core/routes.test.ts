@@ -8,11 +8,12 @@ import { Context } from '@deepseek-ai/cordis'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import Tools, { defineTool, type ToolExecution, type ToolExecutionResult, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { ToolExecutionPipeline } from '@deepseek-ai/dsh-tools/pipeline'
 import * as Native from '@deepseek-ai/dsh-tool-executor-native'
 import { AMAP_DETAILS_TOOL, AMAP_REGION_TOOL, AMAP_ROUTE_TOOLS, AMAP_SEARCH_TOOL } from '../../src/adapters/amap-mcp.ts'
 import { normalizeRoutePayload } from '../../src/adapters/amap-routes.ts'
 import type { Config } from '../../src/config.ts'
-import type { DayItineraryResult } from '../../src/contracts/day-itinerary.ts'
+import type { DayItineraryResult, ItineraryRecommendation } from '../../src/contracts/day-itinerary.ts'
 import { routeModes, type PlanMultiStopRouteResult, type PlanRouteResult, type RouteMode } from '../../src/contracts/routes.ts'
 import { savedPlaceSchema, tripPlannerDomain, type SavedPlace } from '../../src/domain.ts'
 import * as trip from '../../src/index.ts'
@@ -109,6 +110,132 @@ function itinerary(result: ToolExecutionResult): DayItineraryResult {
   assert.ok(!result.isError, JSON.stringify(result))
   return result.value as unknown as DayItineraryResult
 }
+
+type Agent = NonNullable<ToolExecution['agent']>
+const itineraryAgent = (id: string) => ({ id, session: { id } }) as unknown as Agent
+const itineraryStep = (ctx: Context, agent: Agent, turn: number) => ctx.waterfall('agent/pre-step', {
+  agent, turn, step: 1, messages: [], signal: new AbortController().signal, modelSelection: { provider: 'offline', model: 'fixture' },
+}, () => Promise.resolve({ kind: 'reject' as const }))
+
+async function agentItinerary(ctx: Context, agent: Agent, args: Record<string, unknown>, name = 'trip_plan_day_itinerary') {
+  const pipeline = new ToolExecutionPipeline(ctx)
+  const prepared = await pipeline.prepare({
+    callId: ToolCallId(crypto.randomUUID()), name, arguments: args, agent, signal: new AbortController().signal,
+  })
+  return pipeline.complete(prepared.exec, prepared.kind === 'dispatch' ? await pipeline.dispatch(prepared.exec) : prepared)
+}
+
+async function recommend(ctx: Context, agent: Agent, args: Record<string, unknown>): Promise<ItineraryRecommendation> {
+  const output = await agentItinerary(ctx, agent, args, 'trip_recommend_day_itinerary_places')
+  assert.ok(!output.isError, JSON.stringify(output))
+  return output.value as unknown as ItineraryRecommendation
+}
+
+const visitsFixture = [museumA, museumB, { ...museumB, id: 'museum-c', name: '测试铁路博物馆', address: '测试丙路', location: '113.12,23' }]
+const cultureRecommendation = { city: '广州', theme: 'culture' }
+
+test('历史名迹先给候选，排除泛博物馆，确认前零详情和路线调用，编号只属于当前会话', async t => {
+  const historic = [
+    { ...museumA, city: '西安市', name: '测试古城墙' },
+    { ...museumB, city: '西安市', name: '测试历史遗址' },
+    { ...visitsFixture[2], city: '西安市', name: '测试鼓楼' },
+  ]
+  const fixture = await mount({ records: [], search: keywords => ({ pois: keywords === '城墙'
+    ? [{ ...museumA, id: 'unrelated', city: '西安市', name: '情绪博物馆', type: '科教文化服务;博物馆' }, historic[0]]
+    : [historic[0], historic[1], historic[2]] }),
+    detail: async id => historic.find(place => place.id === id),
+  })
+  t.after(fixture.close)
+  const owner = itineraryAgent('historical')
+  const args = { city: '西安', theme: '历史名迹', themeKeywords: ['城墙', '遗址'] }
+  const premature = await agentItinerary(fixture.ctx, owner, { ...args, mode: 'walking' })
+  assert.equal(premature.error?.info?.code, 'TRIP_ITINERARY_SELECTION_REQUIRED')
+  assert.equal(fixture.calls.length, 0)
+  const choices = await recommend(fixture.ctx, owner, args)
+  assert.deepEqual(choices.candidates.map(place => [place.number, place.name]), [
+    [1, '测试古城墙'], [2, '测试历史遗址'], [3, '测试鼓楼'],
+  ])
+  for (const [agent, selectedNumbers] of [[itineraryAgent('another'), [1, 2]], [owner, [2, 2]], [owner, [2, 4]]] as const) {
+    const result = await agentItinerary(fixture.ctx, agent, { draftId: choices.draftId, selectedNumbers, mode: 'walking' })
+    assert.equal(result.isError, true)
+  }
+  assert.deepEqual(fixture.calls.map(call => call.name), [AMAP_SEARCH_TOOL, AMAP_SEARCH_TOOL])
+  const value = itinerary(await agentItinerary(fixture.ctx, owner, { draftId: choices.draftId, selectedNumbers: [2, 3], mode: 'walking' }))
+  assert.equal(value.status, 'ready')
+  assert.deepEqual(value.visits.map(visit => visit.placeId), [historic[1].id, historic[2].id])
+  assert.deepEqual(fixture.calls.slice(2).map(call => call.args), [
+    { id: historic[1].id }, { id: historic[2].id }, { origin: '113.08,23', destination: '113.12,23' },
+  ])
+})
+
+test('触达详情预算时保留原选择和已查详情，继续只补未核验区县并规划', async t => {
+  const fixture = await mount({ config: { agentMaxDetailCallsPerTurn: 3 }, search: () => ({ pois: visitsFixture }),
+    detail: async id => visitsFixture.find(place => place.id === id),
+    region: () => ({ city: '广州市', district: '天河区' }),
+  })
+  t.after(fixture.close)
+  const owner = itineraryAgent('detail-resume')
+  await itineraryStep(fixture.ctx, owner, 1)
+  const choices = await recommend(fixture.ctx, owner, { ...cultureRecommendation, includeDistricts: ['天河区'] })
+  assert.ok(choices.candidates.every(place => place.pendingDistrict))
+  await itineraryStep(fixture.ctx, owner, 2)
+  const selected = { draftId: choices.draftId, selectedNumbers: [1, 2], mode: 'walking' }
+  const limited = itinerary(await agentItinerary(fixture.ctx, owner, selected))
+  assert.equal(limited.route, null)
+  assert.deepEqual(limited.progress, { draftId: choices.draftId, stage: 'verification', reason: 'budget',
+    verifiedNumbers: [1], pendingNumbers: [2], rejectedNumbers: [], completedLegs: 0, pendingLegs: 1 })
+  const beforeRetry = fixture.calls.length
+  assert.equal(itinerary(await agentItinerary(fixture.ctx, owner, { draftId: choices.draftId })).progress?.reason, 'budget')
+  assert.equal(fixture.calls.length, beforeRetry)
+  await itineraryStep(fixture.ctx, owner, 3)
+  const complete = itinerary(await agentItinerary(fixture.ctx, owner, { draftId: choices.draftId }))
+  assert.equal(complete.status, 'ready')
+  assert.deepEqual(fixture.calls.slice(beforeRetry).map(call => call.name), [AMAP_REGION_TOOL, AMAP_ROUTE_TOOLS.walking])
+})
+
+test('禁止区县的候选被替换时保留其他选择和核验结果', async t => {
+  const fixture = await mount({ search: () => ({ pois: visitsFixture }),
+    detail: async id => visitsFixture.find(place => place.id === id),
+    region: location => ({ city: '广州市', district: location === museumB.location ? '荔湾区' : '天河区' }),
+  })
+  t.after(fixture.close)
+  const owner = itineraryAgent('replace-visit')
+  const choices = await recommend(fixture.ctx, owner, { ...cultureRecommendation, excludeDistricts: ['荔湾区'] })
+  const action = { draftId: choices.draftId, mode: 'walking' }
+  const partial = itinerary(await agentItinerary(fixture.ctx, owner, { ...action, selectedNumbers: [1, 2] }))
+  assert.deepEqual(partial.progress?.verifiedNumbers, [1])
+  assert.deepEqual(partial.progress?.rejectedNumbers, [2])
+  assert.equal(partial.route, null)
+  const alreadyCalled = fixture.calls.length
+  const complete = itinerary(await agentItinerary(fixture.ctx, owner, { ...action, selectedNumbers: [1, 3], stayMinutes: 45 }))
+  assert.equal(complete.status, 'ready')
+  assert.deepEqual(complete.visits.map(visit => visit.stayMinutes), [45, 45])
+  assert.deepEqual(fixture.calls.slice(alreadyCalled).map(call => call.name),
+    [AMAP_DETAILS_TOOL, AMAP_REGION_TOOL, AMAP_ROUTE_TOOLS.walking])
+})
+
+test('路线预算中断后只续查剩余路段，无缓存时也不重查已成功路段', async t => {
+  const fixture = await mount({ config: { agentMaxRouteCallsPerTurn: 1 }, search: () => ({ pois: visitsFixture }),
+    detail: async id => visitsFixture.find(place => place.id === id),
+  })
+  t.after(fixture.close)
+  const owner = itineraryAgent('route-resume')
+  await itineraryStep(fixture.ctx, owner, 1)
+  const choices = await recommend(fixture.ctx, owner, cultureRecommendation)
+  await itineraryStep(fixture.ctx, owner, 2)
+  const limited = itinerary(await agentItinerary(fixture.ctx, owner, { draftId: choices.draftId, selectedNumbers: [1, 2, 3], mode: 'walking' }))
+  assert.equal(limited.progress?.reason, 'budget')
+  assert.deepEqual([limited.progress?.completedLegs, limited.progress?.pendingLegs], [1, 1])
+  const called = fixture.calls.length
+  await itineraryStep(fixture.ctx, owner, 3)
+  const complete = itinerary(await agentItinerary(fixture.ctx, owner, { draftId: choices.draftId }))
+  assert.equal(complete.status, 'ready')
+  assert.ok(limited.route && 'stops' in limited.route && complete.route && 'stops' in complete.route)
+  assert.deepEqual(complete.route.legs[0], limited.route.legs[0])
+  assert.deepEqual(fixture.calls.slice(called).map(call => call.name), [AMAP_ROUTE_TOOLS.walking])
+  assert.deepEqual(itinerary(await agentItinerary(fixture.ctx, owner, { draftId: choices.draftId })), complete)
+  assert.equal(fixture.calls.length, called + 1)
+})
 
 test('单日行程自动去重和排除附属点，只查询两个入选地点并生成时间表', async () => {
   const fixture = await mount({ detail: museumDetail, search: () => ({ pois: [

@@ -149,7 +149,7 @@ test('行程的详情与逆地理编码共用 Agent 详情预算，额度不足�
   const { ctx, calls } = await mount({ agentMaxDetailCallsPerTurn: 2 })
   const owner = agent('district-budget')
   try {
-    const args = { city: '广州', theme: '测试地点', includeDistricts: ['天河区'], mode: 'walking' }
+    const args = { city: '广州', theme: '测试地点', includeDistricts: ['天河区'], mode: 'walking', autoSelect: true }
     await step(ctx, owner, 1)
     const first = await invoke(ctx, 'trip_plan_day_itinerary', args, owner)
     assert.equal(first.isError, false)

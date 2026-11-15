@@ -20,6 +20,12 @@ export function DayItineraryResults({ result, onClear }: { result: DayItineraryR
     {result.finishMinute !== null && <p className="trip-planner-muted">预计结束 {itineraryTime(result.finishMinute)}</p>}
     {result.overByMinutes ? <p role="status" className="trip-planner-error">超出结束时间 {result.overByMinutes} 分钟</p> : null}
     {result.message && <p role="status">{result.message}</p>}
+    {result.progress?.reason === 'budget' && <p className="trip-planner-muted">
+      {result.progress.stage === 'verification'
+        ? '已核验 ' + result.progress.verifiedNumbers.length + ' 个地点，待核验 ' + result.progress.pendingNumbers.length + ' 个。'
+        : '已完成 ' + result.progress.completedLegs + ' 段路线，待查 ' + result.progress.pendingLegs + ' 段。'}
+      {' 在对话里说「继续」可接着查。'}
+    </p>}
     {result.timeline.length > 0 ? <ol className="trip-planner-timeline">
       {result.timeline.map((item, index) => {
         const leg = item.legIndex === null ? null : itineraryLeg(result.route, item.legIndex)

@@ -138,6 +138,7 @@ export interface PlanMultiStopRouteResult {
     fetchedAt: string | null
     warnings: string[]
     message: string | null
+    failureCode?: 'budget'
   }[]
   totalDurationSeconds: number | null
   totalDistanceMeters: number | null
@@ -169,6 +170,16 @@ export interface DayItineraryResult {
   finishMinute: number | null
   overByMinutes: number | null
   message: string | null
+  progress?: {
+    draftId: string
+    stage: 'verification' | 'routing'
+    reason: 'budget' | 'selection-needs-review' | 'query-failed' | 'no-route' | 'unknown-duration'
+    verifiedNumbers: number[]
+    pendingNumbers: number[]
+    rejectedNumbers: number[]
+    completedLegs: number
+    pendingLegs: number
+  }
 }
 
 export interface ChatRouteRequest { sessionId: string }

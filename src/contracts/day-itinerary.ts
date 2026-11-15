@@ -8,7 +8,7 @@ const time = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/u)
 const label = z.string().normalize('NFKC').trim().min(1).max(40)
 const district = label.regex(/(?:区|县|旗|市)$/u)
 
-export const dayItineraryQuerySchema = z.object({
+export const itineraryRecommendationSchema = z.object({
   city: z.string().trim().min(1).max(50),
   theme: z.string().normalize('NFKC').trim().min(1).max(80),
   themeKeywords: z.array(label).min(1).max(2).optional(),
@@ -16,6 +16,10 @@ export const dayItineraryQuerySchema = z.object({
   includeDistricts: z.array(district).max(3).optional(),
   excludeDistricts: z.array(district).max(3).optional(),
   preferredArea: label.optional(),
+}).strict()
+export type ItineraryRecommendationQuery = z.infer<typeof itineraryRecommendationSchema>
+
+const itineraryOptionsSchema = z.object({
   mode: z.enum(routeModes),
   startTime: time.optional(),
   endTime: time.optional(),
@@ -24,7 +28,48 @@ export const dayItineraryQuerySchema = z.object({
   destination: endpointReferenceSchema.optional(),
   returnToOrigin: z.boolean().optional(),
 }).strict()
+export const dayItineraryQuerySchema = itineraryRecommendationSchema.extend({
+  ...itineraryOptionsSchema.shape,
+  autoSelect: z.literal(true).optional(),
+})
 export type DayItineraryQuery = z.infer<typeof dayItineraryQuerySchema>
+
+export const itinerarySelectionSchema = itineraryOptionsSchema.partial().extend({
+  draftId: z.uuid(),
+  selectedNumbers: z.array(z.number().int().min(1).max(5)).min(2).max(3).optional(),
+})
+export type ItinerarySelection = z.infer<typeof itinerarySelectionSchema>
+
+export interface ItineraryCandidate {
+  number: number
+  name: string
+  address: string | null
+  category: string | null
+  district: string | null
+  pendingDistrict: boolean
+  reason: string
+}
+
+export interface ItineraryRecommendation {
+  city: string
+  theme: string
+  constraints: ItineraryConstraints
+  draftId: string | null
+  candidates: ItineraryCandidate[]
+  status: 'ready' | 'few-candidates' | 'budget' | 'search-failed'
+  message: string | null
+}
+
+export interface ItineraryProgress {
+  draftId: string
+  stage: 'verification' | 'routing'
+  reason: 'budget' | 'selection-needs-review' | 'query-failed' | 'no-route' | 'unknown-duration'
+  verifiedNumbers: number[]
+  pendingNumbers: number[]
+  rejectedNumbers: number[]
+  completedLegs: number
+  pendingLegs: number
+}
 
 export interface ItineraryConstraints {
   includeDistricts: string[]
@@ -69,4 +114,5 @@ export interface DayItineraryResult {
   finishMinute: number | null
   overByMinutes: number | null
   message: string | null
+  progress?: ItineraryProgress
 }

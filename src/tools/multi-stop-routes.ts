@@ -23,6 +23,7 @@ export const multiStopRouteOutputSchema = { type: 'object', additionalProperties
     status: { type: 'string', enum: ['found', 'no-route', 'query-failed', 'not-queried'], required: true },
     route: { oneOf: [routeOutputSchema.properties.routes.items, { type: 'null' }], required: true },
     fetchedAt: nullableText, message: nullableText, warnings: routeOutputSchema.properties.warnings,
+    failureCode: { type: 'string', const: 'budget' },
   } } },
 } } as const
 
