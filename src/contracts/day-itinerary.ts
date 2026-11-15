@@ -58,7 +58,12 @@ export interface ItineraryRecommendation {
   candidates: ItineraryCandidate[]
   status: 'ready' | 'few-candidates' | 'budget' | 'search-failed'
   message: string | null
+  screening?: ItineraryScreening
 }
+
+export const itineraryRejectionReasons = ['duplicate', 'outsideRegion', 'unverified', 'excluded', 'themeMismatch'] as const
+export type ItineraryRejection = typeof itineraryRejectionReasons[number]
+export type ItineraryScreening = Record<ItineraryRejection, number> & { sourceCounts: number[] }
 
 export interface ItineraryProgress {
   draftId: string
@@ -67,6 +72,7 @@ export interface ItineraryProgress {
   verifiedNumbers: number[]
   pendingNumbers: number[]
   rejectedNumbers: number[]
+  rejections?: { number: number; reason: ItineraryRejection }[]
   completedLegs: number
   pendingLegs: number
 }
@@ -115,4 +121,5 @@ export interface DayItineraryResult {
   overByMinutes: number | null
   message: string | null
   progress?: ItineraryProgress
+  screening?: ItineraryScreening
 }

@@ -1,7 +1,19 @@
 /** 对话和右栏共用单日行程的主题名与时刻格式。 */
-import type { DayItineraryResult, ItineraryConstraints, ItineraryTheme } from '../contracts/day-itinerary.ts'
+import type { DayItineraryResult, ItineraryConstraints, ItineraryRejection, ItineraryScreening, ItineraryTheme } from '../contracts/day-itinerary.ts'
 
 export const themeLabels = { culture: '文化展馆', park: '公园休闲', landmark: '城市地标' } satisfies Record<ItineraryTheme, string>
+
+export const itineraryRejectionLabels = {
+  duplicate: '候选重复', outsideRegion: '不在指定地区', unverified: '必要信息未能核验',
+  excluded: '命中排除条件', themeMismatch: '不符合主题',
+} satisfies Record<ItineraryRejection, string>
+
+export function itineraryScreeningSummary(screening: ItineraryScreening): string {
+  const reasons = Object.keys(itineraryRejectionLabels) as ItineraryRejection[]
+  return reasons.filter(reason => screening[reason] > 0)
+    .map(reason => screening[reason] + ' 个候选' + (reason === 'duplicate' ? '重复'
+      : reason === 'unverified' ? '的必要信息未能核验' : itineraryRejectionLabels[reason]) + '。').join('')
+}
 
 export function itineraryThemeLabel(theme: string): string {
   return Object.hasOwn(themeLabels, theme) ? themeLabels[theme as ItineraryTheme] : theme

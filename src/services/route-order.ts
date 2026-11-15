@@ -4,8 +4,7 @@ import type { Coordinates } from '../contracts/travel.ts'
 
 export interface PinnedStops { pinStart: boolean; pinEnd: boolean }
 
-function meters(from: Coordinates, to: Coordinates): number {
-  if (from.longitude === to.longitude && from.latitude === to.latitude) return Infinity
+export function distanceMeters(from: Coordinates, to: Coordinates): number {
   const radians = Math.PI / 180
   const a = Math.sin((to.latitude - from.latitude) * radians / 2) ** 2
     + Math.cos(from.latitude * radians) * Math.cos(to.latitude * radians)
@@ -14,7 +13,7 @@ function meters(from: Coordinates, to: Coordinates): number {
 }
 
 export function optimizeRouteOrder(stops: RouteEndpoint[], { pinStart, pinEnd }: PinnedStops): RouteEndpoint[] | undefined {
-  const distances = stops.map(from => stops.map(to => meters(from.coordinates, to.coordinates)))
+  const distances = stops.map(from => stops.map(to => distanceMeters(from.coordinates, to.coordinates) || Infinity))
   const last = stops.length - 1
   const remaining = stops.map((_, index) => index)
     .filter(index => !(pinStart && index === 0) && !(pinEnd && index === last))

@@ -14,6 +14,8 @@ import { AMAP_DETAILS_TOOL, AMAP_REGION_TOOL, AMAP_ROUTE_TOOLS, AMAP_SEARCH_TOOL
 import { normalizeRoutePayload } from '../../src/adapters/amap-routes.ts'
 import type { Config } from '../../src/config.ts'
 import type { DayItineraryResult, ItineraryRecommendation } from '../../src/contracts/day-itinerary.ts'
+import type { Place } from '../../src/contracts/travel.ts'
+import { diverseItineraryPlaces, sameItineraryPlace } from '../../src/services/itinerary-candidates.ts'
 import { routeModes, type PlanMultiStopRouteResult, type PlanRouteResult, type RouteMode } from '../../src/contracts/routes.ts'
 import { savedPlaceSchema, tripPlannerDomain, type SavedPlace } from '../../src/domain.ts'
 import * as trip from '../../src/index.ts'
@@ -134,6 +136,93 @@ async function recommend(ctx: Context, agent: Agent, args: Record<string, unknow
 const visitsFixture = [museumA, museumB, { ...museumB, id: 'museum-c', name: '测试铁路博物馆', address: '测试丙路', location: '113.12,23' }]
 const cultureRecommendation = { city: '广州', theme: 'culture' }
 
+test('实体合并需要相符证据，多样性保留相邻独立展区并优先不同场馆', () => {
+  const first: Place = { id: 'one', name: '测试博物馆（西展区）', address: '测试路 １ 号',
+    city: '广州市', district: '天河区', coordinates: { longitude: 113, latitude: 23 }, category: '展馆;博物馆' }
+  const coincident = { ...first, id: 'second', name: '测试博物馆(西展区)', address: '测试路1号',
+    coordinates: { longitude: 113.00003, latitude: 23 } }
+  const nextWing = { ...coincident, id: 'third', name: '测试博物馆（东展区）' }
+  const otherVenue = { ...first, id: 'fourth', name: '测试美术馆', category: '展馆;美术馆' }
+  assert.equal(sameItineraryPlace(first, { ...first, district: '越秀区' }), true, '同一 ID 去重')
+  assert.equal(sameItineraryPlace(first, coincident), true)
+  assert.equal(sameItineraryPlace(first, { ...coincident, address: null }), true)
+  assert.equal(sameItineraryPlace(first, { ...coincident, district: '越秀区' }), false)
+  assert.equal(sameItineraryPlace(first, { ...coincident, category: '展馆;纪念馆' }), false)
+  assert.equal(sameItineraryPlace(first, nextWing), false)
+  assert.equal(sameItineraryPlace(first, { ...coincident, address: null, coordinates: null }), false)
+  assert.equal(sameItineraryPlace(first, { ...coincident, coordinates: { longitude: 113.01, latitude: 23 } }), false)
+  assert.deepEqual(diverseItineraryPlaces([first, nextWing, otherVenue], place => place, () => 0, 3)
+    .map(place => place.id), ['one', 'fourth', 'third'])
+})
+
+test('行程从同一原始搜索缓存读取十个候选，普通搜索仍返回五个', async t => {
+  const extras = Array.from({ length: 9 }, (_, index) => ({
+    ...museumA, id: 'unrelated-' + index, name: '测试停车场 ' + index, type: '停车场',
+  }))
+  const validA = { ...museumA, district: '天河区' }
+  const validB = { ...museumB, district: '天河区' }
+  const fixture = await mount({ config: { cacheEnabled: true, maxResults: 5 },
+    search: () => ({ pois: [...extras.slice(0, 5), { ...museumA, location: undefined }, validA, validB, ...extras.slice(5)] }),
+  })
+  t.after(fixture.close)
+  const signal = new AbortController().signal
+  const search = { city: '广州', keywords: '天河区 博物馆' }
+  const ordinary = await fixture.ctx.travelData.searchPlaces(search, { signal })
+  assert.deepEqual([ordinary.returned, ordinary.sourceCount], [5, 12])
+  const wider = await fixture.ctx.travelData.searchItineraryPlaces(search, { signal })
+  assert.deepEqual([wider.returned, wider.sourceCount], [10, 12])
+  const result = itinerary(await runDay(fixture.ctx, { ...dayQuery, includeDistricts: ['天河区'] }))
+  assert.equal(result.status, 'ready')
+  assert.deepEqual(result.visits.map(visit => visit.placeId), [validA.id, validB.id])
+  assert.equal(result.route && 'origin' in result.route && result.route.origin.detailsFetchedAt, ordinary.fetchedAt)
+  assert.deepEqual(result.screening?.sourceCounts, [12])
+  assert.equal(result.screening?.duplicate, 1)
+  assert.deepEqual(fixture.calls.map(call => call.name), [AMAP_SEARCH_TOOL, AMAP_ROUTE_TOOLS.walking])
+})
+
+test('代选先合并同 ID 和同名地址，两批共享去重且补查只访问原代表', async t => {
+  const a = { ...museumA, location: undefined, district: '天河区' }
+  const b = { ...museumB, district: '天河区' }
+  const fixture = await mount({ search: keywords => ({ pois: keywords.startsWith('天河区')
+    ? [a, { ...a, id: 'same-name-address' }, { ...a, address: undefined }]
+    : [{ ...a, id: 'also-same' }, b] }),
+    detail: async id => id === a.id ? { ...museumA, district: '天河区' } : undefined,
+  })
+  t.after(fixture.close)
+  const result = itinerary(await runDay(fixture.ctx, { ...dayQuery, includeDistricts: ['天河区'] }))
+  assert.equal(result.status, 'ready')
+  assert.equal(result.screening?.duplicate, 3)
+  assert.deepEqual(fixture.calls.map(call => call.name), [
+    AMAP_SEARCH_TOOL, AMAP_DETAILS_TOOL, AMAP_SEARCH_TOOL, AMAP_ROUTE_TOOLS.walking,
+  ])
+  assert.deepEqual(fixture.calls[1].args, { id: a.id })
+})
+
+test('确认后发现两个编号重复时保留已核验选择，重复地点不补区县也不查路线', async t => {
+  const first = { ...museumA, district: undefined }
+  const same = { ...museumA, id: 'late-duplicate', address: undefined, location: undefined }
+  const nearby = { ...museumB, location: '113.04004,23', district: '天河区' }
+  const fixture = await mount({ search: () => ({ pois: [first, same, nearby] }),
+    detail: async id => ({ ...museumA, id }), region: () => ({ city: '广州市', district: '天河区' }),
+  })
+  t.after(fixture.close)
+  const owner = itineraryAgent('late-duplicate')
+  const choices = await recommend(fixture.ctx, owner, { ...cultureRecommendation, includeDistricts: ['天河区'] })
+  assert.equal(choices.candidates.length, 3)
+  const repeatedNumber = choices.candidates.find(place => place.name === first.name && place.address === null)!.number
+  const nearbyNumber = choices.candidates.find(place => place.name === nearby.name)!.number
+  const action = { draftId: choices.draftId, mode: 'walking' }
+  const partial = itinerary(await agentItinerary(fixture.ctx, owner, { ...action, selectedNumbers: [1, repeatedNumber] }))
+  assert.equal(partial.status, 'insufficient-places')
+  assert.equal(partial.route, null)
+  assert.deepEqual(partial.progress?.rejections, [{ number: repeatedNumber, reason: 'duplicate' }])
+  assert.deepEqual(fixture.calls.map(call => call.name), [AMAP_SEARCH_TOOL, AMAP_REGION_TOOL, AMAP_DETAILS_TOOL])
+  const complete = itinerary(await agentItinerary(fixture.ctx, owner, { ...action, selectedNumbers: [1, nearbyNumber] }))
+  assert.equal(complete.status, 'ready')
+  assert.deepEqual(complete.visits.map(visit => visit.placeId), [first.id, nearby.id])
+  assert.deepEqual(fixture.calls.slice(3).map(call => call.name), [AMAP_ROUTE_TOOLS.walking])
+})
+
 test('历史名迹先给候选，排除泛博物馆，确认前零详情和路线调用，编号只属于当前会话', async t => {
   const historic = [
     { ...museumA, city: '西安市', name: '测试古城墙' },
@@ -164,12 +253,13 @@ test('历史名迹先给候选，排除泛博物馆，确认前零详情和路�
   assert.equal(value.status, 'ready')
   assert.deepEqual(value.visits.map(visit => visit.placeId), [historic[1].id, historic[2].id])
   assert.deepEqual(fixture.calls.slice(2).map(call => call.args), [
-    { id: historic[1].id }, { id: historic[2].id }, { origin: '113.08,23', destination: '113.12,23' },
+    { origin: '113.08,23', destination: '113.12,23' },
   ])
 })
 
 test('触达详情预算时保留原选择和已查详情，继续只补未核验区县并规划', async t => {
-  const fixture = await mount({ config: { agentMaxDetailCallsPerTurn: 3 }, search: () => ({ pois: visitsFixture }),
+  const fixture = await mount({ config: { agentMaxDetailCallsPerTurn: 3 },
+    search: () => ({ pois: visitsFixture.map(place => ({ ...place, location: undefined })) }),
     detail: async id => visitsFixture.find(place => place.id === id),
     region: () => ({ city: '广州市', district: '天河区' }),
   })
@@ -211,7 +301,7 @@ test('禁止区县的候选被替换时保留其他选择和核验结果', async
   assert.equal(complete.status, 'ready')
   assert.deepEqual(complete.visits.map(visit => visit.stayMinutes), [45, 45])
   assert.deepEqual(fixture.calls.slice(alreadyCalled).map(call => call.name),
-    [AMAP_DETAILS_TOOL, AMAP_REGION_TOOL, AMAP_ROUTE_TOOLS.walking])
+    [AMAP_REGION_TOOL, AMAP_ROUTE_TOOLS.walking])
 })
 
 test('路线预算中断后只续查剩余路段，无缓存时也不重查已成功路段', async t => {
@@ -237,7 +327,7 @@ test('路线预算中断后只续查剩余路段，无缓存时也不重查已�
   assert.equal(fixture.calls.length, called + 1)
 })
 
-test('单日行程自动去重和排除附属点，只查询两个入选地点并生成时间表', async () => {
+test('单日行程自动去重和排除附属点，完整搜索快照直接生成时间表', async () => {
   const fixture = await mount({ detail: museumDetail, search: () => ({ pois: [
     { ...museumA, id: 'parking', name: '测试历史博物馆停车场' }, museumA,
     { ...museumB, id: 'outside', city: '佛山市' }, { ...museumA, id: 'same-label' }, museumB,
@@ -247,8 +337,9 @@ test('单日行程自动去重和排除附属点，只查询两个入选地点�
     const value = itinerary(output)
     assert.deepEqual(value.visits.map(visit => visit.placeId), ['museum-a', 'museum-b'])
     assert.deepEqual(fixture.calls.map(call => call.name), [
-      AMAP_SEARCH_TOOL, AMAP_DETAILS_TOOL, AMAP_DETAILS_TOOL, AMAP_ROUTE_TOOLS.walking,
+      AMAP_SEARCH_TOOL, AMAP_ROUTE_TOOLS.walking,
     ])
+    assert.equal(value.screening?.duplicate, 1)
     assert.equal(value.status, 'ready')
     assert.equal(value.defaultStart, true)
     assert.equal(value.defaultEnd, true)
@@ -297,7 +388,7 @@ test('自然语言主题按高德类型核验，过滤行政区与排除词，�
     ])
     assert.match(JSON.stringify(output.content), /游览区县 天河区、越秀区/)
     assert.deepEqual(fixture.calls.map(call => call.name), [
-      AMAP_SEARCH_TOOL, AMAP_DETAILS_TOOL, AMAP_DETAILS_TOOL, AMAP_REGION_TOOL, AMAP_ROUTE_TOOLS.walking,
+      AMAP_SEARCH_TOOL, AMAP_DETAILS_TOOL, AMAP_REGION_TOOL, AMAP_ROUTE_TOOLS.walking,
     ])
   } finally { await fixture.close() }
 })
@@ -320,7 +411,7 @@ test('严格排除区县时拒绝同名异地与归属未知的候选，候选�
     assert.equal(value.route, null)
     assert.match(value.message ?? '', /2 个候选不在指定地区.*1 个候选的必要信息未能核验/u)
     assert.deepEqual(fixture.calls.map(call => call.name), [
-      AMAP_SEARCH_TOOL, AMAP_DETAILS_TOOL, AMAP_REGION_TOOL, AMAP_SEARCH_TOOL,
+      AMAP_SEARCH_TOOL, AMAP_REGION_TOOL, AMAP_SEARCH_TOOL,
     ])
   } finally { await fixture.close() }
 })
@@ -337,7 +428,8 @@ test('行政区核验最多四次实际请求，缓存命中和补搜不重复�
       const value = itinerary(await runDay(fixture.ctx, { ...dayQuery, includeDistricts: ['天河区'] }))
       assert.equal(value.status, 'insufficient-places')
       assert.equal(value.route, null)
-      assert.equal(fixture.calls.filter(call => [AMAP_REGION_TOOL, AMAP_DETAILS_TOOL].includes(call.name)).length, 4)
+      assert.equal(fixture.calls.filter(call => call.name === AMAP_REGION_TOOL).length, index === 0 ? 4 : 1)
+      assert.equal(fixture.calls.some(call => call.name === AMAP_DETAILS_TOOL), false)
       assert.equal(fixture.calls.filter(call => call.name === AMAP_SEARCH_TOOL).length, index === 0 ? 2 : 0)
     }
   } finally { await fixture.close() }

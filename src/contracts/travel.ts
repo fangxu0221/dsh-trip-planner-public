@@ -50,9 +50,14 @@ export interface PlacesSearchResult {
   places: Place[]
   warnings: string[]
 }
-/** 详情快照：查询时间与地点原始字段一起交给收藏服务，缺失字段仍为 null。 */
+
+export interface ItineraryPlacesSearchResult extends PlacesSearchResult {
+  duplicateIds?: number
+}
+/** 高德地点快照；经行程核验的搜索结果也可供内部路线解析使用。 */
 export interface PlaceDetailsResult {
   source: 'AMAP'
   fetchedAt: string
   place: Place
+  via?: 'search'
 }

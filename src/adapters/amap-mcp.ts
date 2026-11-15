@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { HarnessError, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { ToolExecutionPipeline } from '@deepseek-ai/dsh-tools/pipeline'
-import type { Coordinates, Place, PlaceDetailsResult, PlaceRegion, PlacesSearchResult, ResolvedSearchPlacesQuery } from '../contracts/travel.ts'
+import type { Coordinates, ItineraryPlacesSearchResult, Place, PlaceDetailsResult, PlaceRegion, ResolvedSearchPlacesQuery } from '../contracts/travel.ts'
+import { preferPlaceSnapshot } from '../services/itinerary-candidates.ts'
 import type { QueryExecution } from '../services/travel-data.ts'
 import type { ResolvedRouteQuery, RouteDataResult, RouteMode } from '../contracts/routes.ts'
 import { normalizeRoutePayload } from './amap-routes.ts'
@@ -96,7 +97,7 @@ function payload(value: unknown): Record<string, unknown> {
  * @param fetchedAt 查询完成时间，不冒充来源数据发布时间。
  * @returns 可供工具、后续收藏功能和界面共用的地点结果。
  */
-export function normalizeSearchResult(value: unknown, query: ResolvedSearchPlacesQuery, fetchedAt: string): PlacesSearchResult {
+export function normalizeSearchResult(value: unknown, query: ResolvedSearchPlacesQuery, fetchedAt: string, enrichDuplicates = false): ItineraryPlacesSearchResult {
   const result = payload(value)
   if (!Array.isArray(result.pois)) return formatError()
   const places = new Map<string, Place>()
@@ -105,7 +106,8 @@ export function normalizeSearchResult(value: unknown, query: ResolvedSearchPlace
     if (typeof item.id !== 'string' || !item.id.trim() || typeof item.name !== 'string' || !item.name.trim()) return formatError()
     const place: Place = { id: item.id.trim(), name: item.name.trim(), address: optionalText(item.address),
       city: optionalText(item.cityname ?? item.city), coordinates: coordinates(item.location), ...placeMetadata(item) }
-    if (!places.has(place.id)) places.set(place.id, place)
+    const existing = places.get(place.id)
+    if (!existing || (enrichDuplicates && preferPlaceSnapshot(place, existing))) places.set(place.id, place)
   }
   const selected = [...places.values()].slice(0, query.limit)
   const truncated = places.size > query.limit
@@ -114,7 +116,8 @@ export function normalizeSearchResult(value: unknown, query: ResolvedSearchPlace
   if (truncated) warnings.push('受本次数量限制，仅展示前 ' + query.limit + ' 个不同地点。')
   if (places.size < result.pois.length) warnings.push('已按高德地点 ID 合并重复结果。')
   return { source: 'AMAP', fetchedAt, query: { ...query }, sourceCount: result.pois.length,
-    returned: selected.length, truncated, places: selected, warnings }
+    returned: selected.length, truncated, places: selected, warnings,
+    ...(enrichDuplicates && { duplicateIds: result.pois.length - places.size }) }
 }
 
 /** 详情必须与请求 ID 一致；未知的响应形状直接失败，不能拿错地点来收藏。 */
@@ -149,10 +152,16 @@ export class AmapMcpAdapter {
    * @param signal 提供方融合取消、卸载和超时后的信号。
    * @returns 高德搜索的业务结果。
    */
-  async searchPlaces(query: ResolvedSearchPlacesQuery, execution: QueryExecution, signal: AbortSignal, refresh = false): Promise<PlacesSearchResult> {
+  async searchPlaces(query: ResolvedSearchPlacesQuery, execution: QueryExecution, signal: AbortSignal,
+    refresh = false, itinerary = false): Promise<ItineraryPlacesSearchResult> {
     const { value, fetchedAt } = await this.invoke(AMAP_SEARCH_TOOL, { keywords: query.keywords, city: query.city, citylimit: true }, execution, signal,
       { request: { kind: 'search', ...query }, refresh, validate: (value, at) => normalizeSearchResult(value, query, at).places })
-    return normalizeSearchResult(value, query, fetchedAt)
+    return normalizeSearchResult(value, itinerary ? { ...query, limit: 10 } : query, fetchedAt, itinerary)
+  }
+
+  async searchItineraryPlaces(query: ResolvedSearchPlacesQuery, execution: QueryExecution, signal: AbortSignal): Promise<ItineraryPlacesSearchResult> {
+    // 缓存中保存的是完整 MCP 回包，沿用默认搜索的键与缓存展示数量。
+    return this.searchPlaces(query, execution, signal, false, true)
   }
 
   /** 固定调用官方只读详情工具，保留与搜索相同的权限和嵌套上下文。 */

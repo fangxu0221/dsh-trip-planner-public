@@ -170,6 +170,7 @@ export interface DayItineraryResult {
   finishMinute: number | null
   overByMinutes: number | null
   message: string | null
+  screening?: Record<'duplicate' | 'outsideRegion' | 'unverified' | 'excluded' | 'themeMismatch', number> & { sourceCounts: number[] }
   progress?: {
     draftId: string
     stage: 'verification' | 'routing'
@@ -177,6 +178,7 @@ export interface DayItineraryResult {
     verifiedNumbers: number[]
     pendingNumbers: number[]
     rejectedNumbers: number[]
+    rejections?: { number: number; reason: 'duplicate' | 'outsideRegion' | 'unverified' | 'excluded' | 'themeMismatch' }[]
     completedLegs: number
     pendingLegs: number
   }

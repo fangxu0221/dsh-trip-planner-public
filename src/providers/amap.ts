@@ -4,7 +4,7 @@ import { HarnessError } from '@deepseek-ai/dsh-llm'
 import { AmapMcpAdapter } from '../adapters/amap-mcp.ts'
 import type { Config } from '../config.ts'
 import { coordinatesSchema } from '../contracts/query-cache.ts'
-import type { Coordinates, PlaceDetailsResult, PlaceRegion, PlacesSearchResult, ResolvedSearchPlacesQuery, SearchPlacesQuery } from '../contracts/travel.ts'
+import type { Coordinates, ItineraryPlacesSearchResult, PlaceDetailsResult, PlaceRegion, PlacesSearchResult, ResolvedSearchPlacesQuery, SearchPlacesQuery } from '../contracts/travel.ts'
 import { routeModes, type ResolvedRouteQuery, type RouteDataResult } from '../contracts/routes.ts'
 import TravelDataService, { type QueryExecution } from '../services/travel-data.ts'
 
@@ -46,6 +46,11 @@ export default class AmapTravelData extends TravelDataService {
     if (query.refresh !== undefined && typeof query.refresh !== 'boolean') throw new HarnessError('刷新选项不合法。', 'TRIP_INVALID_QUERY')
     const resolved = this.resolveQuery(query)
     return this.query(execution, signal => this.adapter.searchPlaces(resolved, execution, signal, query.refresh))
+  }
+
+  override async searchItineraryPlaces(query: Pick<SearchPlacesQuery, 'keywords' | 'city'>, execution: QueryExecution): Promise<ItineraryPlacesSearchResult> {
+    const resolved = this.resolveQuery(query)
+    return this.query(execution, signal => this.adapter.searchItineraryPlaces(resolved, execution, signal))
   }
 
   /** 详情与搜索共用超时、取消和卸载机制，不另建 MCP 连接。 */

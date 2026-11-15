@@ -5,7 +5,8 @@ import { randomUUID } from 'node:crypto'
 import {
   dayItineraryQuerySchema, itineraryRecommendationSchema, itinerarySelectionSchema,
   type DayItineraryQuery, type DayItineraryResult, type ItineraryConstraints, type ItineraryItem, type ItineraryProgress,
-  type ItineraryRecommendation, type ItineraryRecommendationQuery, type ItinerarySelection, type ItineraryVisit,
+  type ItineraryRecommendation, type ItineraryRecommendationQuery, type ItineraryRejection, type ItineraryScreening,
+  type ItinerarySelection, type ItineraryVisit,
 } from '../contracts/day-itinerary.ts'
 import type { EndpointReference, PlanMultiStopRouteResult } from '../contracts/routes.ts'
 import type { Place, PlaceDetailsResult } from '../contracts/travel.ts'
@@ -13,6 +14,8 @@ import ItineraryPlannerService from '../services/itinerary-planner.ts'
 import type {} from '../services/route-planner.ts'
 import type {} from '../services/saved-places.ts'
 import type { QueryExecution } from '../services/travel-data.ts'
+import { addItineraryCandidate, diverseItineraryPlaces, sameItineraryPlace, type ItineraryCandidateGroup } from '../services/itinerary-candidates.ts'
+import { itineraryRejectionLabels, itineraryScreeningSummary } from '../presentation/itinerary.ts'
 
 const themes = {
   culture: { keywords: ['博物馆', '美术馆'], match: /博物馆|美术馆|纪念馆|展览馆|文化馆/u, stay: 90 },
@@ -27,14 +30,14 @@ const draftLifetimeMs = 30 * 60 * 1000
 
 type LiveSession = NonNullable<QueryExecution['agent']>['session']
 type RouteOptions = Omit<ItinerarySelection, 'draftId' | 'selectedNumbers'>
-interface Candidate { place: Place; reason: string }
+interface Candidate { snapshot: PlaceDetailsResult; reason: string }
 interface DraftPlan {
   numbers: number[]
   query: DayItineraryQuery
   options: RouteOptions
   details: Map<string, PlaceDetailsResult>
   visits: Map<number, ItineraryVisit>
-  rejected: Set<number>
+  rejected: Map<number, ItineraryRejection>
   result?: DayItineraryResult
 }
 interface Draft {
@@ -87,12 +90,16 @@ function criteria(query: ItineraryRecommendationQuery, constraints: ItineraryCon
   const historical = historicTheme.test(query.theme)
   const historicalTerms = terms.filter(term => historicEvidence.test(term))
   const searchTerms = historical && !historicalTerms.length ? ['历史遗址', '古建筑'] : historical ? historicalTerms : terms
-  const keywords = includeDistricts.length === 1
-    ? [includeDistricts[0] + ' ' + searchTerms[0], searchTerms[1] ?? searchTerms[0]]
+  const area = includeDistricts.length === 1 ? includeDistricts[0]
+    : !includeDistricts.length && !excludeDistricts.length ? constraints.preferredArea : null
+  // 区名和商圈只辅助搜索召回，实际归属仍核验来源字段。
+  const keywords = area
+    ? [area + ' ' + searchTerms[0], searchTerms[1] ?? searchTerms[0]]
     : searchTerms
   return {
     theme, keywords,
     strictRegion: includeDistricts.length > 0 || excludeDistricts.length > 0,
+    transit: 'mode' in query && query.mode === 'transit',
     evidence(place: Place) {
       if (historical) return textEvidence(place, value => historicEvidence.exec(value)?.[0])
       return textEvidence(place, value => terms.find(term => matchText(value).includes(matchText(term))) ?? theme?.match.exec(value)?.[0])
@@ -126,7 +133,29 @@ function initialResult(request: DayItineraryQuery, constraints: ItineraryConstra
 }
 
 const isBudget = (error: unknown) => error instanceof HarnessError && error.code === budgetCode
-const identityOf = (place: Place) => matchText(place.name) + '\0' + matchText(place.address ?? '') + '\0' + (place.district ?? '')
+const emptyScreening = (): ItineraryScreening => ({
+  duplicate: 0, outsideRegion: 0, excluded: 0, themeMismatch: 0, unverified: 0, sourceCounts: [],
+})
+
+type CandidateCriteria = ReturnType<typeof criteria>
+function knownRejection(place: Place, rules: CandidateCriteria): ItineraryRejection | undefined {
+  if (rules.wrongCity(place.city) || rules.wrongDistrict(place.district)) return 'outsideRegion'
+  if (rules.rejectPlace(place)) return 'excluded'
+  if (place.category && !rules.evidence(place)) return 'themeMismatch'
+}
+
+function requiresDetails(place: Place, rules: CandidateCriteria, exclusions: string[]): boolean {
+  return !place.coordinates || !rules.evidence(place) || (exclusions.length > 0 && !place.category)
+}
+
+function requiresRegion(place: Place, rules: CandidateCriteria): boolean {
+  return (rules.strictRegion && (!place.district || !place.city)) || (rules.transit && !place.city)
+}
+
+function toVisit(candidate: Candidate, stayMinutes: number): ItineraryVisit {
+  const { id, name, address, district } = candidate.snapshot.place
+  return { placeId: id, name, address, reason: candidate.reason, stayMinutes, ...(district && { district }) }
+}
 
 function queryMessage(error: unknown, fallback: string): string {
   if (error instanceof HarnessError) {
@@ -223,30 +252,35 @@ export default class ItineraryPlanner extends ItineraryPlannerService {
     if (!parsed.success) throw new HarnessError('请提供城市、主题及有效的地区约束。', 'TRIP_INVALID_ITINERARY')
     const request = parsed.data
     const constraints = itineraryConstraints(request)
-    const { keywords, evidence, rejectPlace, strictRegion, wrongCity, wrongDistrict } = criteria(request, constraints)
+    const rules = criteria(request, constraints)
+    const { keywords, evidence, strictRegion } = rules
     const preferredArea = constraints.preferredArea
-    // 商圈名称可帮助搜索召回，最终仍只用来源字段判断候选是否在偏好区域。
-    const searches = preferredArea && !strictRegion ? [preferredArea + ' ' + keywords[0], keywords[1] ?? keywords[0]] : keywords
     return this.withDraft(execution, async (state, active) => {
-      const byId = new Set<string>()
-      const byName = new Set<string>()
-      const matches: Candidate[] = []
+      const groups: ItineraryCandidateGroup[] = []
+      const screening = emptyScreening()
+      const skipped = new Set<string>()
+      const priority = (place: Place) => Number(preferred(place, preferredArea))
+      const representative = (place: Place) => Number(!requiresDetails(place, rules, constraints.excludeKeywords)
+        && !requiresRegion(place, rules)) * 2 + priority(place)
       let interrupted: 'budget' | 'search-failed' | undefined
       let message: string | null = null
-      for (const keyword of searches) {
+      for (const keyword of keywords) {
         try {
-          const search = await this.ctx.travelData.searchPlaces({ keywords: keyword, city: request.city }, active)
+          const search = await this.ctx.travelData.searchItineraryPlaces({ keywords: keyword, city: request.city }, active)
           active.signal.throwIfAborted()
+          screening.sourceCounts.push(search.sourceCount)
+          screening.duplicate += search.duplicateIds ?? 0
           for (const place of search.places) {
-            const reason = evidence(place)
-            const identity = identityOf(place)
-            if (!reason || rejectPlace(place) || wrongCity(place.city) || wrongDistrict(place.district)
-              || byId.has(place.id) || byName.has(identity)) continue
-            byId.add(place.id)
-            byName.add(identity)
-            matches.push({ place, reason })
+            const rejection = knownRejection(place, rules) ?? (!evidence(place) ? 'themeMismatch' : undefined)
+            if (rejection) {
+              if (!skipped.has(place.id)) screening[rejection]++
+              skipped.add(place.id)
+            }
+            else if (!addItineraryCandidate(groups, { place, fetchedAt: search.fetchedAt, source: search.source, via: 'search' }, representative)) {
+              screening.duplicate++
+            }
           }
-          if (matches.length >= 3 && (!preferredArea || matches.some(({ place }) => preferred(place, preferredArea)))) break
+          if (groups.length >= 3 && (!preferredArea || groups.some(({ snapshot }) => preferred(snapshot.place, preferredArea)))) break
         } catch (error) {
           active.signal.throwIfAborted()
           interrupted = isBudget(error) ? 'budget' : 'search-failed'
@@ -254,18 +288,19 @@ export default class ItineraryPlanner extends ItineraryPlannerService {
           break
         }
       }
-      const candidates = matches.sort((a, b) =>
-        Number(preferred(b.place, preferredArea)) - Number(preferred(a.place, preferredArea))).slice(0, 5)
+      const candidates = diverseItineraryPlaces(groups, group => group.snapshot.place, group => priority(group.snapshot.place), 5)
+        .map(({ snapshot }) => ({ snapshot, reason: evidence(snapshot.place)! }))
       const draftId = candidates.length ? randomUUID() : null
       state.draft = draftId ? { id: draftId, query: request, constraints, candidates, expiresAt: Date.now() + draftLifetimeMs } : undefined
       return {
         city: request.city, theme: request.theme, constraints: structuredClone(constraints), draftId,
-        candidates: candidates.map(({ place, reason }, index) => ({
+        candidates: candidates.map(({ snapshot: { place }, reason }, index) => ({
           number: index + 1, name: place.name, address: place.address, category: place.category ?? null,
           district: place.district ?? null, pendingDistrict: strictRegion && (!place.district || !place.city), reason,
         })),
         status: interrupted ?? (candidates.length >= 3 ? 'ready' : 'few-candidates'),
         message: message ?? (candidates.length < 2 ? '符合主题的候选不足两个，可以调整主题或地区后重新推荐。' : null),
+        screening,
       }
     })
   }
@@ -295,7 +330,7 @@ export default class ItineraryPlanner extends ItineraryPlannerService {
           || JSON.stringify(plan.query) !== JSON.stringify(input.data)) {
           const reusable = plan?.query.mode === input.data.mode ? plan : undefined
           plan = { numbers: selectedNumbers, query: input.data, options: mergedOptions, details: plan?.details ?? new Map(),
-            visits: reusable?.visits ?? new Map(), rejected: reusable?.rejected ?? new Set() }
+            visits: reusable?.visits ?? new Map(), rejected: reusable?.rejected ?? new Map() }
           draft.plan = plan
         }
       }
@@ -309,56 +344,95 @@ export default class ItineraryPlanner extends ItineraryPlannerService {
     })
   }
 
+  /** 只根据可信快照的缺失字段补查，遇到已知不合格或重复时提前停止。 */
+  private async verifyCandidate(snapshot: PlaceDetailsResult, rules: CandidateCriteria, exclusions: string[],
+    details: Map<string, PlaceDetailsResult>, accepted: readonly Place[],
+    execution: QueryExecution): Promise<Candidate | ItineraryRejection> {
+    let current = details.get(snapshot.place.id) ?? snapshot
+    let place = current.place
+    const rejection = () => knownRejection(place, rules)
+      ?? (accepted.some(point => sameItineraryPlace(point, place)) ? 'duplicate' : undefined)
+    const before = rejection()
+    if (before) return before
+    if (current.via === 'search' && requiresDetails(place, rules, exclusions)) {
+      const found = await this.ctx.travelData.getPlaceDetails(place.id, execution)
+      execution.signal.throwIfAborted()
+      const resolved = found.place
+      const moved = place.coordinates && resolved.coordinates
+        && (place.coordinates.longitude !== resolved.coordinates.longitude || place.coordinates.latitude !== resolved.coordinates.latitude)
+      place = { ...place, ...resolved, address: resolved.address ?? place.address,
+        coordinates: resolved.coordinates ?? place.coordinates,
+        city: resolved.city ?? (moved ? null : place.city),
+        district: resolved.district ?? (moved ? undefined : place.district) }
+      current = { ...found, place }
+      details.set(place.id, current)
+    }
+    const afterDetails = rejection()
+    if (afterDetails) return afterDetails
+    const reason = rules.evidence(place)
+    if (!reason) return 'themeMismatch'
+    if (!place.coordinates) return 'unverified'
+    if (requiresRegion(place, rules)) {
+      const region = await this.ctx.travelData.getPlaceRegion(place.coordinates, execution)
+      execution.signal.throwIfAborted()
+      place = { ...place, city: region.city ?? place.city, district: region.district ?? place.district }
+      current = { ...current, place }
+      details.set(place.id, current)
+    }
+    const checked = rejection()
+    if (checked) return checked
+    if (requiresRegion(place, rules)) return 'unverified'
+    current = { ...current, place }
+    details.set(place.id, current)
+    return { snapshot: current, reason }
+  }
+
   private async buildSelection(draft: Draft, plan: DraftPlan, execution: QueryExecution): Promise<DayItineraryResult> {
     const { query, numbers, details, visits, rejected } = plan
     const { signal } = execution
     const origin = await this.resolveEndpoint(query.origin)
     const destination = query.returnToOrigin ? origin : await this.resolveEndpoint(query.destination)
     const result = initialResult(query, draft.constraints)
-    if (numbers.some(number => [origin?.placeId, destination?.placeId].includes(draft.candidates[number - 1].place.id))) {
+    if (numbers.some(number => [origin?.placeId, destination?.placeId].includes(draft.candidates[number - 1].snapshot.place.id))) {
       throw new HarnessError('有游览点和指定起终点重复，请调整选择。', 'TRIP_INVALID_ITINERARY')
     }
-    const { strictRegion, wrongCity, wrongDistrict, rejectPlace, evidence, theme } = criteria(query, draft.constraints)
-    const stayMinutes = query.stayMinutes ?? theme?.stay ?? 60
+    const rules = criteria(query, draft.constraints)
+    const stayMinutes = query.stayMinutes ?? rules.theme?.stay ?? 60
+    const acceptedPlaces: Place[] = []
+    const acceptedNumbers = new Set<number>()
+    const rejections = new Map<number, ItineraryRejection>()
     const accepted = () => numbers.flatMap(number => {
       const visit = visits.get(number)
-      return visit ? [{ ...visit, stayMinutes }] : []
+      return visit && acceptedNumbers.has(number) ? [{ ...visit, stayMinutes }] : []
     })
     const progress = (stage: ItineraryProgress['stage'], reason: ItineraryProgress['reason'],
       completedLegs = 0, pendingLegs = numbers.length - 1 + Number(!!origin) + Number(!!destination) - completedLegs): ItineraryProgress => ({
       draftId: draft.id, stage, reason, completedLegs, pendingLegs,
-      verifiedNumbers: numbers.filter(number => visits.has(number)),
-      pendingNumbers: numbers.filter(number => !visits.has(number) && !rejected.has(number)),
-      rejectedNumbers: numbers.filter(number => rejected.has(number)),
+      verifiedNumbers: numbers.filter(number => acceptedNumbers.has(number)),
+      pendingNumbers: numbers.filter(number => !acceptedNumbers.has(number) && !rejections.has(number)),
+      rejectedNumbers: numbers.filter(number => rejections.has(number)),
+      ...(rejections.size && { rejections: [...rejections].map(([number, reason]) => ({ number, reason })) }),
     })
-    for (const number of numbers) {
+    // 换选时先放入已核验的原选择；重复结论只用于本次组合，不永久禁用编号。
+    const ordered = [...numbers].sort((a, b) => Number(visits.has(b)) - Number(visits.has(a)))
+    for (const number of ordered) {
       signal.throwIfAborted()
-      if (visits.has(number) || rejected.has(number)) continue
+      const previousRejection = rejected.get(number)
+      if (previousRejection) {
+        rejections.set(number, previousRejection)
+        continue
+      }
       const candidate = draft.candidates[number - 1]
       try {
-        let found = details.get(candidate.place.id)
-        if (!found) {
-          found = await this.ctx.travelData.getPlaceDetails(candidate.place.id, execution)
-          signal.throwIfAborted()
-          details.set(candidate.place.id, found)
-        }
-        const resolved = found.place
-        let place = { ...candidate.place, ...resolved, city: resolved.city ?? candidate.place.city,
-          address: resolved.address ?? candidate.place.address }
-        if (strictRegion && !wrongCity(place.city) && !wrongDistrict(place.district) && (!place.district || !place.city) && resolved.coordinates) {
-          const region = await this.ctx.travelData.getPlaceRegion(resolved.coordinates, execution)
-          signal.throwIfAborted()
-          place = { ...place, city: region.city ?? place.city, district: region.district ?? place.district }
-        }
-        const reason = evidence(place)
-        if (!reason || rejectPlace(place) || wrongCity(place.city) || wrongDistrict(place.district)
-          || !place.coordinates || (strictRegion && (!place.city || !place.district)) || (query.mode === 'transit' && !place.city)) {
-          rejected.add(number)
+        const verified = await this.verifyCandidate(candidate.snapshot, rules, draft.constraints.excludeKeywords, details, acceptedPlaces, execution)
+        if (typeof verified === 'string') {
+          rejections.set(number, verified)
+          if (verified !== 'duplicate') rejected.set(number, verified)
           continue
         }
-        details.set(place.id, { ...found, place })
-        visits.set(number, { placeId: place.id, name: place.name, address: place.address, reason,
-          stayMinutes, ...(place.district && { district: place.district }) })
+        acceptedPlaces.push(verified.snapshot.place)
+        acceptedNumbers.add(number)
+        visits.set(number, toVisit(verified, stayMinutes))
       } catch (error) {
         signal.throwIfAborted()
         return { ...result, visits: accepted(), progress: progress('verification', isBudget(error) ? 'budget' : 'query-failed'),
@@ -366,9 +440,11 @@ export default class ItineraryPlanner extends ItineraryPlannerService {
       }
     }
     result.visits = accepted()
-    if (numbers.some(number => rejected.has(number))) {
+    if (rejections.size) {
       return { ...result, status: 'insufficient-places', progress: progress('verification', 'selection-needs-review'),
-        message: '部分所选地点不符合要求或缺少必要信息，请替换这些编号。其他已确认地点已保留。' }
+        message: '已确认 ' + result.visits.length + ' 个地点。'
+          + [...rejections].map(([number, reason]) => '编号 ' + number + ' ' + itineraryRejectionLabels[reason] + '。').join('')
+          + '请替换这些编号，其他选择已保留。' }
     }
     const previous = plan.result?.route
     try {
@@ -407,13 +483,19 @@ export default class ItineraryPlanner extends ItineraryPlannerService {
     signal.throwIfAborted()
     const destination = query.returnToOrigin ? origin : await this.resolveEndpoint(query.destination)
     const excluded = new Set([origin?.placeId, destination?.placeId])
-    const seen = new Set<string>()
-    const verified = new Map<string, PlaceDetailsResult>()
-    const candidates: { place: Place; visit: ItineraryVisit }[] = []
-    const { theme, keywords, evidence, strictRegion, wrongCity, wrongDistrict, rejectPlace } = criteria(query, constraints)
+    const groups: ItineraryCandidateGroup[] = []
+    const checked = new Set<ItineraryCandidateGroup>()
+    const skipped = new Set<string>()
+    const details = new Map<string, PlaceDetailsResult>()
+    const candidates: Candidate[] = []
+    const rules = criteria(query, constraints)
+    const { theme, keywords, evidence } = rules
     const { excludeKeywords, preferredArea } = constraints
-    let outside = 0
-    let unverified = 0
+    const screening = emptyScreening()
+    result.screening = screening
+    const readyWithoutLookup = (place: Place) => !requiresDetails(place, rules, excludeKeywords) && !requiresRegion(place, rules)
+    const priority = (place: Place) => Number(readyWithoutLookup(place)) * 4
+      + Number(!!evidence(place)) * 2 + Number(preferred(place, preferredArea))
     let budgetMessage: string | null = null
     let lookupLimited = false
     let lookups = 0
@@ -422,77 +504,66 @@ export default class ItineraryPlanner extends ItineraryPlannerService {
       execution.beforePlaceLookup?.()
       lookups++
     } }
-    const enough = () => preferredArea
-      ? candidates.filter(candidate => preferred(candidate.place, preferredArea)).length >= 2
-      : candidates.length >= 2
-    const shortlist = () => [...candidates].sort((a, b) =>
-      Number(preferred(b.place, preferredArea)) - Number(preferred(a.place, preferredArea))).slice(0, 2).map(candidate => candidate.visit)
+    const enough = () => candidates.length >= 2 && (!preferredArea
+      || candidates.filter(candidate => preferred(candidate.snapshot.place, preferredArea)).length >= 2)
+    const shortlist = () => diverseItineraryPlaces(candidates, candidate => candidate.snapshot.place,
+      candidate => Number(preferred(candidate.snapshot.place, preferredArea)), 2)
+      .map(candidate => toVisit(candidate, query.stayMinutes ?? theme?.stay ?? 60))
     for (const keyword of keywords) {
       signal.throwIfAborted()
-      let places: Place[]
       try {
-        const search = await this.ctx.travelData.searchPlaces({ keywords: keyword, city: query.city }, execution)
-        places = search.places
+        const search = await this.ctx.travelData.searchItineraryPlaces({ keywords: keyword, city: query.city }, execution)
         signal.throwIfAborted()
+        screening.sourceCounts.push(search.sourceCount)
+        screening.duplicate += search.duplicateIds ?? 0
+        for (const place of search.places) {
+          const rejection = excluded.has(place.id) ? 'excluded' : knownRejection(place, rules)
+            ?? (theme && !query.themeKeywords && !evidence(place) ? 'themeMismatch' : undefined)
+          if (rejection) {
+            if (!skipped.has(place.id)) screening[rejection]++
+            skipped.add(place.id)
+          }
+          else if (!addItineraryCandidate(groups, { place, fetchedAt: search.fetchedAt, source: search.source, via: 'search' }, priority)) {
+            screening.duplicate++
+          }
+        }
       } catch (error) {
         signal.throwIfAborted()
-        if (!preferredArea || candidates.length < 2) {
+        if (candidates.length < 2) {
           return { ...result, visits: shortlist(), message: queryMessage(error, '地点搜索未完成，可以稍后重新规划。') }
         }
         queryMessage(error, '地点搜索未完成。')
         break
       }
-      // 优先核验已有主题依据的候选，把详情额度留给更相关的地点。
-      const ordered = [...places].sort((a, b) => Number(!!evidence(b)) - Number(!!evidence(a)))
-      for (let place of ordered) {
+      // 本批已去重，先使用字段齐全的候选，余下详情预算只用于凑齐合格游览点。
+      const pending = groups.filter(group => !checked.has(group))
+      const ordered = diverseItineraryPlaces(pending, group => group.snapshot.place, group => priority(group.snapshot.place), pending.length)
+      for (const group of ordered) {
         signal.throwIfAborted()
-        if (excluded.has(place.id) || rejectPlace(place)) continue
-        excluded.add(place.id)
-        if (wrongCity(place.city) || wrongDistrict(place.district)) { outside++; continue }
-        const reason = evidence(place)
-        if (!reason && (place.category || (theme && !query.themeKeywords))) continue
-        let details: PlaceDetailsResult | undefined
+        if (candidates.length >= 2 && !readyWithoutLookup(group.snapshot.place)) continue
+        checked.add(group)
         try {
-          if (strictRegion || !reason || (excludeKeywords.length && !place.category) || (preferredArea && !preferred(place, preferredArea))) {
-            details = await this.ctx.travelData.getPlaceDetails(place.id, lookupExecution)
-            const resolved = details.place
-            place = { ...place, ...resolved, city: resolved.city ?? place.city, address: resolved.address ?? place.address }
-            if (rejectPlace(place) || !evidence(place)) continue
-            if (wrongCity(place.city) || wrongDistrict(place.district)) { outside++; continue }
-            if (strictRegion && (!place.district || !place.city) && resolved.coordinates) {
-              const region = await this.ctx.travelData.getPlaceRegion(resolved.coordinates, lookupExecution)
-              place = { ...place, city: region.city ?? place.city, district: region.district ?? place.district }
-            }
-          }
+          const verified = await this.verifyCandidate(group.snapshot, rules, excludeKeywords, details,
+            candidates.map(candidate => candidate.snapshot.place), lookupExecution)
+          if (typeof verified === 'string') screening[verified]++
+          else candidates.push(verified)
         } catch (error) {
           signal.throwIfAborted()
-          if (error instanceof HarnessError && error.code === 'TRIP_AGENT_QUERY_BUDGET') {
-            budgetMessage = error.message
+          screening.unverified++
+          if (isBudget(error)) {
+            budgetMessage = queryMessage(error, '当前轮次的核验额度已用完。')
             break
           }
           if (error instanceof HarnessError && error.code === 'TRIP_ITINERARY_LOOKUP_BUDGET') lookupLimited = true
           queryMessage(error, '地点信息未能核验。')
-          if (strictRegion || !reason || excludeKeywords.length) { unverified++; continue }
         }
-        if (wrongCity(place.city) || wrongDistrict(place.district)) { outside++; continue }
-        if (strictRegion && (!place.city || !place.district || !place.coordinates)) { unverified++; continue }
-        const matched = evidence(place)
-        if (!matched) continue
-        const identity = identityOf(place)
-        if (seen.has(identity)) continue
-        seen.add(identity)
-        if (details?.place.coordinates) verified.set(place.id, { ...details, place })
-        candidates.push({ place, visit: { placeId: place.id, name: place.name, address: place.address, reason: matched,
-          stayMinutes: query.stayMinutes ?? theme?.stay ?? 60, ...(place.district && { district: place.district }) } })
-        if (enough()) break
       }
       if (enough() || budgetMessage) break
     }
     result.visits = shortlist()
     if (result.visits.length < 2) {
       const notes = [
-        outside > 0 && outside + ' 个候选不在指定地区。',
-        unverified > 0 && unverified + ' 个候选的必要信息未能核验。',
+        itineraryScreeningSummary(screening),
         lookupLimited && '已达到本次行程的地点核验上限。',
         budgetMessage,
       ].filter(Boolean).join('')
@@ -501,7 +572,7 @@ export default class ItineraryPlanner extends ItineraryPlannerService {
     }
 
     try {
-      return await this.routeForVisits(query, result, origin?.reference, destination?.reference, execution, verified)
+      return await this.routeForVisits(query, result, origin?.reference, destination?.reference, execution, details)
     } catch (error) {
       signal.throwIfAborted()
       return { ...result, message: queryMessage(error, '交通路线未完成，已保留入选地点。') }

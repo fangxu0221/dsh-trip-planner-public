@@ -1,7 +1,7 @@
 /** 角色一：服务约定。提供方实现方法，工具消费方通过 ctx.travelData 使用能力。 */
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
-import type { Coordinates, PlaceDetailsResult, PlaceRegion, PlacesSearchResult, SearchPlacesQuery } from '../contracts/travel.ts'
+import type { Coordinates, ItineraryPlacesSearchResult, PlaceDetailsResult, PlaceRegion, PlacesSearchResult, SearchPlacesQuery } from '../contracts/travel.ts'
 import type { ResolvedRouteQuery, RouteDataResult } from '../contracts/routes.ts'
 
 /**
@@ -33,6 +33,9 @@ export default abstract class TravelDataService extends Service {
    * @returns 同一结构的地点列表、查询条件、来源和数量说明。
    */
   abstract searchPlaces(query: SearchPlacesQuery, execution: QueryExecution): Promise<PlacesSearchResult>
+
+  /** 行程读取同一搜索回包中更多的候选，仍走共享的地图服务。 */
+  abstract searchItineraryPlaces(query: Pick<SearchPlacesQuery, 'keywords' | 'city'>, execution: QueryExecution): Promise<ItineraryPlacesSearchResult>
 
   /** 按已选择的真实 POI ID 获取详情，供收藏使用，不接受模型自行拼出的地点字段。 */
   abstract getPlaceDetails(placeId: string, execution: QueryExecution, options?: { refresh?: boolean }): Promise<PlaceDetailsResult>

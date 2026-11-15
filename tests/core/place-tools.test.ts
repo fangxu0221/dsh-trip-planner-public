@@ -32,7 +32,11 @@ async function mount(config: Partial<Config> = {}) {
   ctx.tools.register(defineTool({ name: AMAP_SEARCH_TOOL, description: '模拟搜索',
     parameters: { keywords: text, city: text, citylimit: { type: 'boolean', required: true } },
     output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '模拟搜索' }] },
-    async execute() { calls.search++; return raw({ pois: Array.from({ length: 10 }, (_, i) => place('p' + (i + 1))) }) },
+    async execute(args) {
+      calls.search++
+      const pois = Array.from({ length: 10 }, (_, i) => place('p' + (i + 1)))
+      return raw({ pois: args.keywords.endsWith('测试地点') ? pois.map(point => ({ ...point, location: undefined })) : pois })
+    },
   }))
   ctx.tools.register(defineTool({ name: AMAP_DETAILS_TOOL, description: '模拟详情', parameters: { id: text },
     output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '模拟详情' }] },

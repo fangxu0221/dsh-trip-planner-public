@@ -1,10 +1,10 @@
 /** 对话单日行程入口，按确定的时间表输出，不在展示阶段发起查询。 */
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { dayItineraryQuerySchema, itinerarySelectionSchema, type DayItineraryResult, type ItineraryRecommendation } from '../contracts/day-itinerary.ts'
+import { dayItineraryQuerySchema, itineraryRejectionReasons, itinerarySelectionSchema, type DayItineraryResult, type ItineraryRecommendation } from '../contracts/day-itinerary.ts'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
 import { routeModes } from '../contracts/routes.ts'
-import { itineraryConstraintLabels, itineraryLeg, itineraryThemeLabel, itineraryTime } from '../presentation/itinerary.ts'
+import { itineraryConstraintLabels, itineraryLeg, itineraryScreeningSummary, itineraryThemeLabel, itineraryTime } from '../presentation/itinerary.ts'
 import { formatTransitOption } from '../presentation/transit.ts'
 import type {} from '../services/itinerary-planner.ts'
 import { multiStopRouteOutputSchema } from './multi-stop-routes.ts'
@@ -20,6 +20,10 @@ const nullableText = { oneOf: [{ type: 'string' }, { type: 'null' }], required: 
 const nullableInteger = { oneOf: [{ type: 'integer' }, { type: 'null' }], required: true } as const
 const labels = { type: 'array', items: { type: 'string' } } as const
 const numbers = { type: 'array', items: { type: 'integer' } } as const
+const screeningSchema = { type: 'object', additionalProperties: false, properties: {
+  duplicate: integer, outsideRegion: integer, unverified: integer, excluded: integer,
+  themeMismatch: integer, sourceCounts: { ...numbers, required: true },
+} } as const
 const constraintSchema = { type: 'object', additionalProperties: false, properties: {
   includeDistricts: { ...labels, required: true }, excludeDistricts: { ...labels, required: true },
   excludeKeywords: { ...labels, required: true }, preferredArea: nullableText,
@@ -36,6 +40,7 @@ const recommendationParameters = {
 const recommendationOutput = { type: 'object', additionalProperties: false, properties: {
   city: text, theme: text, constraints: { ...constraintSchema, required: true },
   draftId: nullableText, message: nullableText,
+  screening: screeningSchema,
   status: { type: 'string', enum: ['ready', 'few-candidates', 'budget', 'search-failed'], required: true },
   candidates: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
     number: integer, name: text, address: nullableText, category: nullableText, district: nullableText, pendingDistrict: flag, reason: text,
@@ -57,11 +62,15 @@ const outputSchema = { type: 'object', additionalProperties: false, properties: 
     startMinute: nullableInteger, endMinute: nullableInteger, legIndex: nullableInteger,
   } } },
   finishMinute: nullableInteger, overByMinutes: nullableInteger, message: nullableText,
+  screening: screeningSchema,
   progress: { type: 'object', additionalProperties: false, properties: {
     draftId: text, stage: { type: 'string', enum: ['verification', 'routing'], required: true },
     reason: { type: 'string', enum: ['budget', 'selection-needs-review', 'query-failed', 'no-route', 'unknown-duration'], required: true },
     verifiedNumbers: { ...numbers, required: true }, pendingNumbers: { ...numbers, required: true },
     rejectedNumbers: { ...numbers, required: true }, completedLegs: integer, pendingLegs: integer,
+    rejections: { type: 'array', items: { type: 'object', additionalProperties: false, properties: {
+      number: integer, reason: { type: 'string', enum: itineraryRejectionReasons, required: true },
+    } } },
   } },
 } } as const
 
@@ -75,6 +84,7 @@ function renderRecommendation(result: ItineraryRecommendation): string {
     ].filter(Boolean).join('｜')),
     result.draftId && '清单引用 draftId=' + result.draftId,
     result.message,
+    result.screening && itineraryScreeningSummary(result.screening),
     result.candidates.length >= 2 && '请用户任选两个或三个不同编号，确认交通方式后再查路线。',
   ].filter(Boolean).join('\n')
 }
