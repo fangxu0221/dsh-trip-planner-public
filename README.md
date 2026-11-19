@@ -141,6 +141,8 @@ pnpm.cmd test
 
 用例位于源码的 `tests/core/`，覆盖路线排序与分段、单日行程、换乘展示、地点和路线收藏、查询缓存及 Agent 请求预算。
 
+Agent 场景评测包含 29 个场景和 Fake 高德数据，支持离线回归与真实模型 Smoke。运行步骤见 [Agent 评测说明](eval/README.md)。
+
 ## 许可证
 
 本项目采用 [MIT 许可证](LICENSE)。

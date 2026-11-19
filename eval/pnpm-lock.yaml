@@ -1,0 +1,31 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    devDependencies:
+      '@deepseek-ai/dsh-agent':
+        specifier: link:../../deepseek-harness/packages/core/agent
+        version: link:../../deepseek-harness/packages/core/agent
+      '@deepseek-ai/dsh-agent-loop':
+        specifier: link:../../deepseek-harness/packages/core/agent-loop
+        version: link:../../deepseek-harness/packages/core/agent-loop
+      '@deepseek-ai/dsh-anonymous-user-id':
+        specifier: link:../../deepseek-harness/packages/identity/anonymous-user-id
+        version: link:../../deepseek-harness/packages/identity/anonymous-user-id
+      '@deepseek-ai/dsh-brand':
+        specifier: link:../../deepseek-harness/packages/util/brand
+        version: link:../../deepseek-harness/packages/util/brand
+      '@deepseek-ai/dsh-llm-deepseek':
+        specifier: link:../../deepseek-harness/packages/llm/llm-deepseek
+        version: link:../../deepseek-harness/packages/llm/llm-deepseek
+      '@deepseek-ai/dsh-session':
+        specifier: link:../../deepseek-harness/packages/core/session
+        version: link:../../deepseek-harness/packages/core/session
+      '@deepseek-ai/dsh-session-projection':
+        specifier: link:../../deepseek-harness/packages/session/session-projection
+        version: link:../../deepseek-harness/packages/session/session-projection

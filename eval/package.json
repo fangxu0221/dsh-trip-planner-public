@@ -1,0 +1,19 @@
+{
+  "name": "trip-planner-agent-eval",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "agent": "node runner/main.ts",
+    "test": "node --test --test-timeout=15000 runner/*.test.ts",
+    "typecheck": "node ../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-agent": "link:../../deepseek-harness/packages/core/agent",
+    "@deepseek-ai/dsh-agent-loop": "link:../../deepseek-harness/packages/core/agent-loop",
+    "@deepseek-ai/dsh-session": "link:../../deepseek-harness/packages/core/session",
+    "@deepseek-ai/dsh-session-projection": "link:../../deepseek-harness/packages/session/session-projection",
+    "@deepseek-ai/dsh-llm-deepseek": "link:../../deepseek-harness/packages/llm/llm-deepseek",
+    "@deepseek-ai/dsh-brand": "link:../../deepseek-harness/packages/util/brand",
+    "@deepseek-ai/dsh-anonymous-user-id": "link:../../deepseek-harness/packages/identity/anonymous-user-id"
+  }
+}

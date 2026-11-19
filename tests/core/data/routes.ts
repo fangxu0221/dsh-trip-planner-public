@@ -1,3 +1,46 @@
+/** 共享 Fake MCP 注册：保留原参数结构、工具流水线和高德文本包裹格式。 */
+import type { Context } from '@deepseek-ai/cordis'
+import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { AMAP_DETAILS_TOOL, AMAP_REGION_TOOL, AMAP_ROUTE_TOOLS, AMAP_SEARCH_TOOL } from '../../../src/adapters/amap-mcp.ts'
+import { routeModes, type RouteMode } from '../../../src/contracts/routes.ts'
+
+export type FakeRouteArgs = { origin: string; destination: string; city?: string; cityd?: string }
+
+function raw(data: unknown) { return { content: [{ type: 'text', text: JSON.stringify(data) }] } }
+
+export function registerFakeAmap(ctx: Context, handlers: {
+  search?: (args: { keywords: string; city: string; citylimit: boolean }, execution: ToolRunContext) => unknown
+  detail: (args: { id: string }, execution: ToolRunContext) => unknown
+  region?: (args: { location: string }, execution: ToolRunContext) => unknown
+  route?: (mode: RouteMode, args: FakeRouteArgs, execution: ToolRunContext) => unknown
+  registerRoutes?: boolean
+}): void {
+  const output = { schema: { type: 'json' }, render: () => [{ type: 'text' as const, text: 'Fake Fixture' }] } as const
+  if (handlers.search) ctx.tools.register(defineTool({
+    name: AMAP_SEARCH_TOOL, description: '测试主题搜索',
+    parameters: { keywords: { type: 'string', required: true }, city: { type: 'string', required: true },
+      citylimit: { type: 'boolean', required: true } },
+    output, async execute(args, execution) { return raw(await handlers.search?.(args, execution)) },
+  }))
+  ctx.tools.register(defineTool({
+    name: AMAP_DETAILS_TOOL, description: '测试详情',
+    parameters: { id: { type: 'string', required: true } },
+    output, async execute(args, execution) { return raw(await handlers.detail(args, execution)) },
+  }))
+  if (handlers.region) ctx.tools.register(defineTool({
+    name: AMAP_REGION_TOOL, description: '测试行政区核验',
+    parameters: { location: { type: 'string', required: true } },
+    output, async execute(args, execution) { return raw(await handlers.region?.(args, execution)) },
+  }))
+  if (handlers.registerRoutes !== false) for (const mode of routeModes) ctx.tools.register(defineTool({
+    name: AMAP_ROUTE_TOOLS[mode], description: '测试路线',
+    parameters: { origin: { type: 'string', required: true }, destination: { type: 'string', required: true },
+      ...mode === 'transit' ? { city: { type: 'string', required: true } as const, cityd: { type: 'string', required: true } as const } : {} },
+    output, async execute(args, execution) {
+      return raw(handlers.route ? await handlers.route(mode, args, execution) : routeFixtures[mode])
+    },
+  }))
+}
 /** 仅供离线测试的路线样本，不参与生产查询。字段结构参考高德文档，数值不代表真实导航。 */
 export const routeFixtures = {
   walking: { route: { paths: [{ distance: '1200', duration: '960', steps: [{ instruction: '沿测试路步行', distance: '1200', duration: '960' }] }] } },

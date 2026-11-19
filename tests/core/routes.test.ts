@@ -19,7 +19,7 @@ import { diverseItineraryPlaces, sameItineraryPlace } from '../../src/services/i
 import { routeModes, type PlanMultiStopRouteResult, type PlanRouteResult, type RouteMode } from '../../src/contracts/routes.ts'
 import { savedPlaceSchema, tripPlannerDomain, type SavedPlace } from '../../src/domain.ts'
 import * as trip from '../../src/index.ts'
-import { routeFixtures } from './data/routes.ts'
+import { registerFakeAmap, routeFixtures, type FakeRouteArgs as RouteArgs } from './data/routes.ts'
 import { transitPresentationFixture } from './data/route-presentation.ts'
 import { mountStorage } from './storage-helper.ts'
 
@@ -29,9 +29,6 @@ function saved(placeId: string, alias: string, longitude: number): SavedPlace {
   return savedPlaceSchema.parse({ id: crypto.randomUUID(), placeId, alias, source: 'AMAP', name: '测试地点' + placeId,
     address: '测试地址', city: '广州市', coordinates: { longitude, latitude: 23 }, fetchedAt, createdAt: fetchedAt, updatedAt: fetchedAt })
 }
-function raw(data: unknown) { return { content: [{ type: 'text', text: JSON.stringify(data) }] } }
-type RouteArgs = { origin: string; destination: string; city?: string; cityd?: string }
-
 async function mount(options: {
   records?: SavedPlace[]; config?: Partial<Config>; registerRoutes?: boolean
   detail?: (id: string, execution: ToolRunContext) => Promise<unknown>
@@ -50,44 +47,26 @@ async function mount(options: {
     for (const record of options.records ?? [saved('poi1', '家', 113), saved('poi2', '公司', 113.1)]) await domain.table('favorites').put(record.id, record)
     await domain.close()
     const calls: { name: string; args: unknown }[] = []
-    if (options.search) ctx.tools.register(defineTool({
-      name: AMAP_SEARCH_TOOL, description: '测试主题搜索',
-      parameters: { keywords: { type: 'string', required: true }, city: { type: 'string', required: true },
-        citylimit: { type: 'boolean', required: true } },
-      output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '测试主题搜索' }] },
-      async execute(args) {
+    registerFakeAmap(ctx, {
+      search: options.search && (args => {
         calls.push({ name: AMAP_SEARCH_TOOL, args })
-        return raw(options.search?.(args.keywords))
-      },
-    }))
-    ctx.tools.register(defineTool({
-      name: AMAP_DETAILS_TOOL, description: '测试详情', parameters: { id: { type: 'string', required: true } },
-      output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '测试详情' }] },
-      async execute(args, execution) {
+        return options.search!(args.keywords)
+      }),
+      detail: (args, execution) => {
         calls.push({ name: AMAP_DETAILS_TOOL, args })
-        return raw(options.detail ? await options.detail(args.id, execution) : { id: args.id, name: '测试地点' + args.id,
-          address: '新详情地址', city: '广州市', location: args.id === 'poi1' ? '113,23' : '113.1,23' })
+        return options.detail ? options.detail(args.id, execution) : { id: args.id, name: '测试地点' + args.id,
+          address: '新详情地址', city: '广州市', location: args.id === 'poi1' ? '113,23' : '113.1,23' }
       },
-    }))
-    if (options.region) ctx.tools.register(defineTool({
-      name: AMAP_REGION_TOOL, description: '测试行政区核验',
-      parameters: { location: { type: 'string', required: true } },
-      output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '测试行政区核验' }] },
-      async execute(args) {
+      region: options.region && (args => {
         calls.push({ name: AMAP_REGION_TOOL, args })
-        return raw(options.region?.(args.location))
-      },
-    }))
-    if (options.registerRoutes !== false) for (const mode of routeModes) ctx.tools.register(defineTool({
-      name: AMAP_ROUTE_TOOLS[mode], description: '测试路线',
-      parameters: { origin: { type: 'string', required: true }, destination: { type: 'string', required: true },
-        ...mode === 'transit' ? { city: { type: 'string', required: true } as const, cityd: { type: 'string', required: true } as const } : {} },
-      output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: '测试路线' }] },
-      async execute(args, execution) {
+        return options.region!(args.location)
+      }),
+      registerRoutes: options.registerRoutes,
+      route: (mode, args, execution) => {
         calls.push({ name: AMAP_ROUTE_TOOLS[mode], args })
-        return raw(options.route ? await options.route(mode, args, execution) : routeFixtures[mode])
+        return options.route ? options.route(mode, args, execution) : routeFixtures[mode]
       },
-    }))
+    })
     const fiber = ctx.plugin(trip, trip.Config({ showLifecycleLogs: false, cacheEnabled: false, ...options.config }))
     await fiber
     assert.ok(ctx.get('routePlanner'))
